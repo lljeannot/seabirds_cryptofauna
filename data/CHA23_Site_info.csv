@@ -1,0 +1,24 @@
+﻿ID,Date,Atoll,Island,Location,Treatment,CSL,Condition
+A,17-Oct,Salomon,Passe,lagoon,Birdy,250,swell
+B,18-Oct,Salomon,Ile Anglaise,lagoon,Ratty,250,ok
+C,18-Oct,Salomon,Ile Anglaise,lagoon,Ratty,210,ok
+D,19-Oct,Salomon,Ile Anglaise,lagoon,Ratty,180,ok
+E,19-Oct,Salomon,Passe,lagoon,Birdy,240,ok
+F,20-Oct,Salomon,Passe,lagoon,Birdy,230,ok
+G,20-Oct,Salomon,Passe,lagoon,Birdy,250,ok
+H,22-Oct,Peros Banhos,Grande Ile Coquillage,lagoon,Birdy,220,swell
+I,22-Oct,Peros Banhos,Grande Ile Coquillage,lagoon,Birdy,180,ok
+J,23-Oct,Peros Banhos,Grande Ile Coquillage,lagoon,Birdy,220,ok
+K,23-Oct,Peros Banhos,Grande Ile Coquillage,lagoon,Birdy,210,ok
+L,24-Oct,Peros Banhos,Ile Anglaise,lagoon,Ratty,210,ok
+M,25-Oct,Peros Banhos,Ile Anglaise,lagoon,Ratty,250,swell
+N,27-Oct,Peros Banhos,Ile Yeye,lagoon,Ratty,250,ok
+O,27-Oct,Peros Banhos,Ile Yeye,lagoon,Ratty,220,ok
+P,28-Oct,Great Chagos Bank,Middle Brother,lagoon,Birdy,150,ok
+Q,28-Oct,Great Chagos Bank,Middle Brother,lagoon,Birdy,150,ok
+R,29-Oct,Great Chagos Bank,Middle Brother,lagoon,Birdy,180,ok
+S,29-Oct,Great Chagos Bank,Middle Brother,lagoon,Birdy,210,ok
+T,30-Oct,Great Chagos Bank,Eagle Island,outer reef,Ratty,200,ok
+U,30-Oct,Great Chagos Bank,Eagle Island,outer reef,Ratty,240,ok
+V,31-Oct,Great Chagos Bank,Eagle Island,outer reef,Ratty,220,ok
+W,31-Oct,Great Chagos Bank,Eagle Island,outer reef,Ratty,260,ok

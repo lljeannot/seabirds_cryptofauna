@@ -1,0 +1,2731 @@
+---
+title: "seabirds_cryptofauna"
+output: html_document
+date: "2025-09-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+# Load data and packages
+
+```{r import}
+
+# 1. Required packages ----
+
+library(plyr)
+library(tidytable)
+library(simcausal)
+library(Rlab)
+library(sf)
+library(stars)
+library(rnaturalearth)
+library(raster)
+library(ggspatial)
+library(gridExtra)
+library(grid)
+library(SIBER)
+library(ggpubr)
+library(ggord)
+library(ggcheck)
+library(scales)
+library(labdsv)
+library(vegan)
+library(ggrepel)
+library(reshape2)
+library(brms)
+library(ggdist)
+library(tidybayes)
+library(emmeans)
+library(modelr)
+library(MixSIAR)
+library(patchwork)
+library(ggridges)
+library(ggimage)
+library(magick)
+library(dplyr)
+library(tidyverse)
+
+# 2. Data ----
+
+site_data <- read.csv("data/CHA23_Site_info.csv")
+
+# Stable isotope analysis data
+
+invert_data_SIA <- read.csv("data/CHA23_Invert_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000)
+
+fish_data_SIA <- read.csv("data/CHA23_Fish_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  filter(FAM %in% c("Gobiidae", "Blenniidae", "Gobiesocidae", "Tripterygiidae", 
+                    "Syngnathidae", "Pseudochromidae","Plesiopidae", "Apogonidae", "Callionymidae")) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000)
+
+data_SIA_fish <- read.csv("data/CHA23_SIA_data.csv") %>% 
+  filter(Taxon == "Fish") %>% 
+  filter(QC_N == "") %>% #no need to get rid of QC_C for d15N analysis
+  select(ID, Taxon, N15, C13) %>% 
+  left_join(fish_data_SIA, by = c("ID" = "TUBE_SIA")) %>% 
+  filter(GENSPE %in% c("Eviota guttata", "Eviota distigma", "Eviota prasina", "Eviota sebreei", "Eviota nebulosa", "Trimma haima", "Chlidichthys chagosensis")) %>%
+  select(Taxon, N15, C13, Treatment, GENSPE, Atoll, Island, Site, TL, W)
+
+data_SIA_inv <- read.csv("data/CHA23_SIA_data.csv") %>% 
+  filter(Taxon == "Inv") %>% 
+  filter(QC_N == "") %>% 
+  left_join(invert_data_SIA, by = c("ID" = "TUBE_SIA")) %>% 
+  filter(Taxa %in% c("Alpheidae", "Galatheidae", "Palaemonidae", "Trapeziidae", "Xanthidae", "Ophiuroidea", "Porcellanidae")) %>% 
+  mutate(Length = case_when(Taxa %in% c("Porcellanidae", "Trapeziidae", "Xanthidae") ~ Cara_L,
+                            Taxa %in% c("Ophiuroidea") ~ Arm_diam,
+                            TRUE ~ TL)) %>% 
+  select(-C13) %>% 
+  rename(C13 = C13_LF) %>% 
+  mutate(C13 = as.numeric(C13)) %>% 
+  select(Taxon, N15, C13, Treatment, Taxa, Atoll, Island, Site, Length, W)
+
+# Data for mixing models
+
+data_SIA_fish_mm <- read.csv("data/CHA23_SIA_data.csv") %>% 
+  filter(Taxon == "Fish") %>% 
+  filter(QC_N == "" & QC_C == "") %>% 
+  select(ID, Taxon, N15, C13) %>% 
+  left_join(fish_data_SIA, by = c("ID" = "TUBE_SIA")) %>% 
+  filter(GENSPE %in% c("Eviota guttata", "Eviota distigma", "Eviota prasina", "Eviota sebreei", "Eviota nebulosa", "Trimma haima", "Chlidichthys chagosensis")) %>%
+  select(Taxon, N15, C13, Treatment, GENSPE, Atoll, Island, Site, TL, W)
+
+data_SIA_inv_mm <- read.csv("data/CHA23_SIA_data.csv") %>% 
+  filter(Taxon == "Inv") %>% 
+  filter(QC_N == ""& QC_C == "") %>% 
+  left_join(invert_data_SIA, by = c("ID" = "TUBE_SIA")) %>% 
+  filter(Taxa %in% c("Alpheidae", "Galatheidae", "Palaemonidae", "Trapeziidae", "Xanthidae", "Ophiuroidea", "Porcellanidae")) %>% 
+  mutate(Length = case_when(Taxa %in% c("Porcellanidae", "Trapeziidae", "Xanthidae") ~ Cara_L,
+                            Taxa %in% c("Ophiuroidea") ~ Arm_diam,
+                            TRUE ~ TL)) %>% 
+  select(-C13) %>% 
+  rename(C13 = C13_LF) %>% 
+  mutate(C13 = as.numeric(C13)) %>% 
+  select(Taxon, N15, C13, Treatment, Taxa, Atoll, Island, Site, Length, W)
+
+# Community analysis data
+
+invert_data <- read.csv("data/CHA23_Invert_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000) %>% 
+  filter(Condition == "ok")
+
+fish_data <- read.csv("data/CHA23_Fish_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  filter(FAM %in% c("Gobiidae", "Blenniidae", "Gobiesocidae", "Tripterygiidae", 
+                    "Syngnathidae", "Pseudochromidae","Plesiopidae", "Apogonidae", "Callionymidae")) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000) %>% 
+  filter(Condition == "ok")
+
+# UVC data
+
+data_uvc <- read.csv("data/CHA23_UVC_data.csv")
+
+# Table S2
+
+# get TL
+
+invert_data_TL <- read.csv("data/CHA23_Invert_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000) %>% 
+  filter(Condition == "ok") %>% 
+  mutate(Length = case_when(Taxa %in% c("Porcellanidae", "Trapeziidae", "Xanthidae") ~ Cara_L,
+                            Taxa %in% c("Ophiuroidea", "Crinoidea") ~ Arm_diam,
+                            TRUE ~ TL)) %>% 
+  group_by(Taxa) %>% 
+  summarize(mean_Length = mean(Length, na.rm = T),
+            SD = sd(Length, na.rm = T),
+            W = mean(W, na.rm = T),
+            SD_W = sd(W, na.rm = T),
+            min_Length = min(Length, na.rm = T),
+            max_Length = max(Length, na.rm = T),
+            n = n())
+
+fish_data_TL <- read.csv("data/CHA23_Fish_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  filter(FAM %in% c("Gobiidae", "Blenniidae", "Gobiesocidae", "Tripterygiidae", 
+                    "Syngnathidae", "Pseudochromidae","Apogonidae")) %>% 
+  filter(Condition == "ok") %>% 
+  group_by(Treatment, GENSPE) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000) %>% 
+  summarize(min_TL = min(TL, na.rm = T),
+            max_TL = max(TL, na.rm = T),
+            TL_mean = mean(TL, na.rm = T),
+            SD = sd(TL, na.rm = T), 
+            W = mean(W, na.rm = T),
+            SD_W = sd(W, na.rm = T),
+            n = n())
+
+fish_data_TL <- read.csv("data/CHA23_Fish_data.csv") %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  filter(FAM %in% c("Blenniidae")) %>% 
+  filter(Condition == "ok") %>% 
+  group_by(Atoll, Island, Treatment) %>% 
+  mutate(r = CSL/pi, Area = (2*pi*r^2)/10000) %>% 
+  summarize(min_TL = min(TL, na.rm = T),
+            max_TL = max(TL, na.rm = T),
+            TL_mean = mean(TL, na.rm = T),
+            SD = sd(TL, na.rm = T), 
+            W = mean(W, na.rm = T),
+            SD_W = sd(W, na.rm = T),
+            n = n())
+
+# 3. Load silhouettes
+
+img_fish <- image_read("figures/silhouettes/Eviogutt.png") %>% 
+  image_flatten() %>% as.raster() %>% 
+  rasterGrob(interpolate = T)
+
+img_inv <- image_read("figures/silhouettes/inv.png") %>% 
+  image_flatten() %>% as.raster() %>% 
+  rasterGrob(interpolate = T)
+
+```
+
+# Fig. 1 - Map
+
+```{r fig1-map}
+
+sb_gps <- read.csv("data/GPS.csv")
+
+sf::sf_use_s2(FALSE)
+
+# 1. IO map ----
+
+worldmap <- ne_countries(scale = 10, returnclass = 'sf')
+countries <- ne_download(category = "cultural", type = "countries", 
+                         returnclass = "sf", scale = 110) 
+ocean <- st_as_sfc(st_bbox(worldmap)) %>%
+  st_difference(st_union(countries))
+
+ioshp <- read_sf("data/map/ne_10m_land.shp", stringsAsFactors = TRUE)
+
+cropped_IO <- st_crop(worldmap, xmin = 35, xmax = 80, ymin = -29, ymax = 9)
+ocean_cropped_IO <- st_crop(ocean, xmin = 35, xmax = 80, ymin = -29, ymax = 9)
+
+CP_IO <- as(extent(35, 80, -29, 9), "SpatialPolygons")
+proj4string(CP_IO) <- CRS(proj4string(as_Spatial(ioshp)))
+out_IO <- st_intersection(st_as_sf(ioshp), st_as_sf(CP_IO), byid = TRUE)
+
+map_IO <- ggplot() + 
+  theme_bw() +
+  coord_map() + 
+  geom_sf(data = ocean_cropped_IO, size = 3, fill = "white", col = "white") +
+  geom_sf(data = out_IO, size = 3, fill = "lightgrey") +
+  geom_sf(data = out_IO, size = 3, fill = "transparent") +
+  annotate(geom = "text", x = 65, y = -15, label = "Indian Ocean", 
+           fontface = "italic", color = "darkgrey", size = 2.7) +
+  geom_rect(data = out_IO, xmin = 71, xmax = 73, ymin = -6.5, ymax = -5.1, fill = NA, colour = "#474F58", 
+            linewidth = 0.5) +
+  annotation_scale(data = out_IO, location = "bl", width_hint = 0.05, height = unit(0.2, "cm"), text_cex = 0.5, text_pad = unit(0.15, "cm")) +
+  guides(x = guide_axis(position = "top")) +
+  theme(legend.margin = margin(), legend.title = element_text(hjust = 0, size = 9),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid = element_blank()) 
+
+map_IO
+
+# 2. Chagos map ----
+
+chashp <- read_sf("data/map/Chagos_v6.shp", stringsAsFactors = TRUE)
+
+cropped_C <- st_crop(worldmap, xmin = 70, xmax = 74.2, ymin = -6.5, ymax = -5.1)
+ocean_cropped_C <- st_crop(ocean, xmin = 71, xmax = 73, ymin = -6.5, ymax = -5.1)
+
+CP_C <- as(extent(70, 74.2, -6.5, -5.1), "SpatialPolygons")
+proj4string(CP_C) <- CRS(proj4string(as_Spatial(chashp)))
+out_C <- st_intersection(st_as_sf(chashp), st_as_sf(CP_C), byid = TRUE)
+
+
+map_C <- ggplot() +
+  theme_bw() +
+  geom_point(data = sb_gps, aes(y = Lat, x = Lon, color = Seabird), size = 3) +
+  coord_map() + 
+  geom_sf(data = ocean_cropped_C, fill = "white", col = "white") +
+  geom_sf(data = out_C, fill = "lightgrey") +
+  geom_sf(data = out_C, fill = "transparent") +
+  geom_rect(data = out_C, xmin = 72.182, xmax = 72.292, ymin = -5.372, ymax = -5.272, fill = NA, colour = "#474F58", 
+            linewidth = 0.5) +
+  geom_rect(data = out_C, xmin = 71.696, xmax = 72.006, ymin = -5.485, ymax = -5.175, fill = NA, colour = "#474F58", 
+            linewidth = 0.5) +
+  geom_rect(data = out_C, xmin = 71.306, xmax = 71.546, ymin = -6.250, ymax = -6.010, fill = NA, colour = "#474F58",
+            linewidth = 0.5) +
+  labs(color = bquote("Island status")) + 
+  annotation_scale(data = out_C, location = "tl", width_hint = 0.05, height = unit(0.2, "cm"), text_cex = 0.5, text_pad = unit(0.15, "cm")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(legend.margin = margin(), legend.title = element_text(hjust = 0, size = 9),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid = element_blank(),
+        plot.margin = margin(0.5, 0, 0, 0, "cm")) +
+  scale_x_continuous(breaks=seq(71.2, 72.8, 0.5))
+
+# Salomon map
+
+cropped_S <- st_crop(worldmap, xmin = 72.182, xmax = 72.292, ymin = -5.372, ymax = -5.272)
+ocean_cropped_S <- st_crop(ocean, xmin = 72.182, xmax = 72.292, ymin = -5.372, ymax = -5.262)
+
+CP_S <- as(extent(72.182, 72.292, -5.372, -5.262), "SpatialPolygons")
+proj4string(CP_S) <- CRS(proj4string(as_Spatial(chashp)))
+out_S <- st_intersection(st_as_sf(chashp), st_as_sf(CP_S), byid = TRUE)
+
+
+map_S <- ggplot() +
+  theme_bw() +
+  coord_map() + 
+  geom_sf(data = ocean_cropped_S, fill = "transparent", col = "white") +
+  geom_sf(data = out_S, fill = "lightgrey") +
+  geom_sf(data = out_S, fill = "transparent") +
+  scale_color_manual(values = c("#0067A4", "#BF0033")) +
+  geom_point(data = sb_gps %>% filter(Atoll == "Salomon"), aes(y = Lat, x = Lon, color = Seabird), size = 3) +
+  annotation_scale(data = out_S, location = "tl", width_hint = 0.12, height = unit(0.2, "cm"), 
+                   text_cex = 0.5, text_pad = unit(0.15, "cm")) +
+  annotate(geom = "text", x = 72.257, y = -5.29, label = "Ile de la Passe\n(3+1)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  annotate(geom = "text", x = 72.205, y = -5.325, label = "Ile Anglaise\n(3)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  theme(legend.margin = margin(), legend.title = element_text(hjust = 0, size = 9),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"))
+
+# Peros Banhos map
+
+cropped_PB <- st_crop(worldmap, xmin = 71.696, xmax = 72.006, ymin = -5.485, ymax = -5.175)
+ocean_cropped_PB <- st_crop(ocean, xmin = 71.696, xmax = 72.006, ymin = -5.485, ymax = -5.175)
+
+CP_PB <- as(extent(71.696, 72.006, -5.485, -5.175), "SpatialPolygons")
+proj4string(CP_PB) <- CRS(proj4string(as_Spatial(chashp)))
+out_PB <- st_intersection(st_as_sf(chashp), st_as_sf(CP_PB), byid = TRUE)
+
+
+map_PB <- ggplot() +
+  theme_bw() +
+  coord_map() + 
+  geom_sf(data = ocean_cropped_PB, fill = "transparent", col = "white") +
+  geom_sf(data = out_PB, fill = "lightgrey") +
+  geom_sf(data = out_PB, fill = "transparent") +
+  scale_color_manual(values = c("#0067A4", "#BF0033")) +
+  geom_point(data = sb_gps %>% filter(Atoll == "Peros Banhos"), aes(y = Lat, x = Lon, color = Seabird), size = 3) +
+  annotation_scale(data = out_PB, location = "tl", width_hint = 0.05, height = unit(0.2, "cm"), 
+                   text_cex = 0.5, text_pad = unit(0.15, "cm")) +
+  annotate(geom = "text", x = 71.968, y = -5.21, label = "Ile Yeye\n(1+1)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  annotate(geom = "text", x = 71.73, y = -5.478, label = "Ile Anglaise\n(2)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  annotate(geom = "text", x = 71.98, y = -5.440, label = "Grande \nIle \nCoquillage \n(3+1)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  theme(legend.margin = margin(), legend.title = element_text(hjust = 0, size = 9),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"))
+
+# Great Chagos Bank map
+
+cropped_GCB <- st_crop(worldmap, xmin = 71.306, xmax = 71.546, ymin = -6.25, ymax = -6.01)
+ocean_cropped_GCB <- st_crop(ocean, xmin = 71.306, xmax = 71.546, ymin = -6.25, ymax = -6.01)
+
+CP_GCB <- as(extent(71.306, 71.546, -6.25, -6.01), "SpatialPolygons")
+proj4string(CP_GCB) <- CRS(proj4string(as_Spatial(chashp)))
+out_GCB <- st_intersection(st_as_sf(chashp), st_as_sf(CP_GCB), byid = TRUE)
+
+
+map_GCB <- ggplot() +
+  theme_bw() +
+  coord_map() + 
+  geom_sf(data = ocean_cropped_GCB, fill = "transparent", col = "white") +
+  geom_sf(data = out_GCB, fill = "lightgrey") +
+  geom_sf(data = out_GCB, fill = "transparent") +
+  geom_point(data = sb_gps %>% filter(Atoll == "Great Chagos Bank"), aes(y = Lat, x = Lon, color = Seabird), size = 3) +
+  scale_color_manual(values = c("#0067A4", "#BF0033")) +
+  annotation_scale(data = out_GCB, location = "tl", width_hint = 0.1, height = unit(0.2, "cm"), 
+                   text_cex = 0.5, text_pad = unit(0.15, "cm")) +
+  annotate(geom = "text", x = 71.478, y = -6.154, label = "Middle \nBrother\n(4)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  annotate(geom = "text", x = 71.341, y = -6.154, label = "Eagle Island\n(4)", 
+           fontface = "italic", color = "#474F58", size = 2.7) +
+  theme(legend.margin = margin(), legend.title = element_text(hjust = 0, size = 9),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        panel.grid = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "cm"))
+
+map.plot <- ggarrange(
+  ggarrange(map_IO, map_C + rremove("xy.text") + rremove("ticks"), nrow = 1),
+  ggarrange(
+  map_GCB + rremove("xy.text") + rremove("ticks") + rremove("legend"),
+  map_PB + rremove("xy.text") + rremove("ticks") + rremove("legend"), 
+  map_S + rremove("xy.text") + rremove("ticks") + rremove("legend"), 
+  labels = c("Great Chagos \n           Bank", "Peros Banhos", "Salomon"), 
+  hjust = c(-0.9, -0.9, -1.7), vjust = c(1.5, 2.2, 2.2), font.label = list(size = 10, color = "#474F58"),
+  align = "h", nrow = 1),
+ nrow = 2, heights = c(1.1, 1)) 
+
+map.plot
+
+map_grob <- as.grob(map.plot)
+
+composite_with_arrows <- gTree(children = gList(
+  map_grob,
+  linesGrob(x = unit(c(0.58, 0.3), "npc"),
+    y = unit(c(0.625, 0.475), "npc"),
+    gp = gpar(col = "#474F58", lwd = 1.2)),
+  linesGrob(x = unit(c(0.65, 0.62), "npc"),
+    y = unit(c(0.785, 0.475), "npc"),
+    gp = gpar(col = "#474F58", lwd = 1.2)),
+  linesGrob(x = unit(c(0.71, 0.9), "npc"),
+    y = unit(c(0.81, 0.475), "npc"),
+    gp = gpar(col = "#474F58", lwd = 1.2)),
+  linesGrob(x = unit(c(0.395, 0.505), "npc"),
+    y = unit(c(0.766, 0.71), "npc"),
+    gp = gpar(col = "#474F58", lwd = 1.2))
+))
+
+arrow_plot <- ggplot() + 
+  theme_void() +
+  annotation_custom(composite_with_arrows)
+
+arrow_plot
+
+#ggsave("figures/draft/Fig1.png", arrow_plot, width = 7, height = 5, units = "in", dpi = 600)
+#ggsave("figures/draft/Fig1.pdf", arrow_plot, width = 6, height = 4, units = "in", dpi = 600)
+```
+
+# I. Stable isotope analyses ----
+
+# I. 1. d15N
+
+```{r fig2-models}
+
+# 1. Models
+
+# 1.1. Overall guild d15N
+
+prior_N15 <- c(
+  prior(normal(10, 2.5), class = "Intercept"), #between 5 and 15
+  prior(normal(-0.64, 0.5), class = "b", coef = "TreatmentRatty"), # Jeannot et al 2025
+  prior(exponential(1), class = "sd"))
+
+N15.tot.mod.fish <- brm(N15 ~ Treatment + (1|Atoll/Island), data = data_SIA_fish, prior = prior_N15, control = list(adapt_delta = 0.99, max_treedepth = 12))
+summary(N15.tot.mod.fish)
+hypothesis(N15.tot.mod.fish, "0 > TreatmentRatty")
+
+N15.tot.mod.inv <- brm(N15 ~ Treatment + (1|Atoll/Island), data = data_SIA_inv, control = list(adapt_delta = 0.999, max_treedepth = 12))
+summary(N15.tot.mod.inv)
+hypothesis(N15.tot.mod.inv, "0 > TreatmentRatty")
+
+pp_check(N15.tot.mod.fish)
+pp_check(N15.tot.mod.inv)
+
+# 1.2. Species and family-level d15N
+
+# Fish
+
+prior_N15_genspe <- c(
+  prior(normal(10, 2.5), class = "Intercept"),
+  prior(normal(-0.64, 0.5), class = "b", coef = "TreatmentRatty"),
+  
+  # Deviations from reference species effect
+  prior(normal(0, 0.5), class = "b", coef = "TreatmentRatty:GENSPEEviotadistigma"),
+  prior(normal(0, 0.5), class = "b", coef = "TreatmentRatty:GENSPEEviotaguttata"),
+  prior(normal(0, 0.5), class = "b", coef = "TreatmentRatty:GENSPEEviotanebulosa"),
+  prior(normal(0, 0.5), class = "b", coef = "TreatmentRatty:GENSPEEviotaprasina"),
+  prior(normal(0, 0.5), class = "b", coef = "TreatmentRatty:GENSPEEviotasebreei"),
+  prior(normal(0, 0.5), class = "b", coef = "TreatmentRatty:GENSPETrimmahaima"),
+  prior(exponential(1), class = "sigma"))
+
+N15.tot.mod.fish.genspe <- brm(N15 ~ Treatment*GENSPE + (1|Atoll/Island),prior = prior_N15_genspe, data = data_SIA_fish, control = list(adapt_delta = 0.99, max_treedepth = 12))
+summary(N15.tot.mod.fish.genspe)
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty")
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty + TreatmentRatty:GENSPEEviotaguttata")
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty + TreatmentRatty:GENSPEEviotadistigma")
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty + TreatmentRatty:GENSPEEviotanebulosa")
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty + TreatmentRatty:GENSPEEviotaprasina")
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty + TreatmentRatty:GENSPEEviotasebreei")
+hypothesis(N15.tot.mod.fish.genspe, "0 > TreatmentRatty + TreatmentRatty:GENSPETrimmahaima")
+
+# Inverts
+
+N15.tot.mod.inv.fam <- brm(N15 ~ Treatment*Taxa + (1|Atoll/Island), data = data_SIA_inv, control = list(adapt_delta = 0.99, max_treedepth = 12))
+summary(N15.tot.mod.inv.fam)
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty")
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty + TreatmentRatty:TaxaPorcellanidae")
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty + TreatmentRatty:TaxaGalatheidae")
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty + TreatmentRatty:TaxaPalaemonidae")
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty + TreatmentRatty:TaxaTrapeziidae")
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty + TreatmentRatty:TaxaXanthidae")
+hypothesis(N15.tot.mod.inv.fam, "0 > TreatmentRatty + TreatmentRatty:TaxaOphiuroidea")
+
+# 1.3. Relationship TL - d15N
+
+prior_N15_b <- c(
+  prior(normal(-0.64, 0.5), class = "b", coef = "TreatmentRatty"), # Jeannot et al 2025
+  prior(exponential(1), class = "sd"),
+  prior(exponential(1), class = "sigma")
+)
+
+# Fish
+
+N15.TL.fish.log <- brm(N15 ~ Treatment*TL_c + (1|Atoll/Island) + (1|GENSPE), data = data_SIA_fish %>% mutate(logTL = log(TL), TL_c = logTL - mean(logTL, na.rm = T)), prior = prior_N15, control = list(adapt_delta = 0.99, max_treedepth = 12))
+summary(N15.TL.fish.log)
+pp_check(N15.TL.fish.log)
+hypothesis(N15.TL.fish.log, "TreatmentRatty:TL_c < 0") #100
+
+# Inverts
+
+N15.TL.inv.log <- brm(N15 ~ Treatment*Length_c + (1|Atoll/Island) + (1|Taxa), data = data_SIA_inv %>% mutate(logLength = log(Length), Length_c = logLength - mean(logLength, na.rm = T)), control = list(adapt_delta = 0.99, max_treedepth = 12))
+summary(N15.TL.inv.log)
+hypothesis(N15.TL.inv.log, "TreatmentRatty:Length_c < 0") #69
+
+# 2. Estimates
+
+# 2.1. Increase in N15
+
+draws_treatment_fish <- spread_draws(N15.tot.mod.fish, b_TreatmentRatty)
+
+# Get summary
+treatment_summary_fish <- draws_treatment_fish %>%
+  summarise(
+    mean = mean(b_TreatmentRatty),
+    lower = quantile(b_TreatmentRatty, 0.025),
+    upper = quantile(b_TreatmentRatty, 0.975))
+
+draws_intercept_fish <- spread_draws(N15.tot.mod.fish, b_Intercept)
+
+# Combine and calculate percent
+pct_change_fish <- draws_treatment_fish %>%
+  bind_cols(draws_intercept_fish) %>%
+  mutate(pct = 100 * b_TreatmentRatty / b_Intercept) %>%
+  summarise(
+    mean_pct = mean(pct),
+    lower_pct = quantile(pct, 0.025),
+    upper_pct = quantile(pct, 0.975))
+
+pred_fish <- add_epred_draws(N15.tot.mod.fish, newdata = tibble(Treatment = c("Ratty", "Birdy")), re_formula = NA) %>%
+  group_by(Treatment) %>%
+  summarise(mean = mean(.epred),
+    lower = quantile(.epred, 0.025),
+    upper = quantile(.epred, 0.975))
+
+# 2.2. Slope TL - d15N
+
+# Fish
+
+draws_TL_fish <- spread_draws(N15.TL.fish.log, `b_TreatmentRatty:TL_c`)
+
+slope_diff_summary_fish <- draws_TL_fish %>%
+  summarise(mean = mean(`b_TreatmentRatty:TL_c`),
+    lower = quantile(`b_TreatmentRatty:TL_c`, 0.025),
+    upper = quantile(`b_TreatmentRatty:TL_c`, 0.975))
+
+
+draws <- spread_draws(N15.TL.fish.log, `b_TL_c`, `b_TreatmentRatty:TL_c`) %>%
+  mutate(
+    slope_Birdy = `b_TL_c`,
+    slope_Ratty = `b_TL_c` + `b_TreatmentRatty:TL_c`,
+    pct_diff = 100 * (slope_Birdy - slope_Ratty) / slope_Ratty)
+
+draws_summary <- draws %>% summarise(
+    mean_pct = mean(pct_diff),
+    lower_pct = quantile(pct_diff, 0.025),
+    upper_pct = quantile(pct_diff, 0.975))
+
+slopes <- emtrends(N15.TL.fish.log, ~ Treatment, var = "TL_c", re_formula = NA)
+summary(slopes)
+
+# Invertebrates
+
+draws_inv <- spread_draws(N15.TL.inv.log, `b_Length_c`, `b_TreatmentRatty:Length_c`) %>%
+  mutate(
+    slope_Birdy = `b_Length_c`,
+    slope_Ratty = `b_Length_c` + `b_TreatmentRatty:Length_c`,
+    pct_diff = 100 * (slope_Birdy - slope_Ratty) / slope_Ratty)
+
+draws_summary_inv <- draws_inv %>% summarise(
+    mean_pct = mean(pct_diff),
+    lower_pct = quantile(pct_diff, 0.025),
+    upper_pct = quantile(pct_diff, 0.975))
+
+slopes <- emtrends(N15.TL.inv.log, ~ Treatment, var = "Length_c", re_formula = NA)
+summary(slopes)
+
+```
+
+```{r fig2-plots}
+
+# Overall fish guild d15N plot
+
+N15.tot.fish.pred.plot <- N15.tot.mod.fish %>% 
+  add_epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    ndraws = 1000),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty")) %>%
+  ggplot(aes(x = .epred, y = 0, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6) + 
+  stat_pointinterval(point_size = 1, pch = 21, position = position_dodge(width = 0.3, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  geom_jitter(data = data_SIA_fish, aes(x = N15, y = 0.3, fill = Treatment), size = 0.5, col = "black", pch = 21, alpha = 0.5, width = 0, height = 0.3) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  annotation_custom(img_fish, xmin = 7, xmax = 10, ymin = 1.1, ymax = 1.25) +
+  xlab(expression(~delta^15*N~"\U2030")) +
+  ylab("") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank(),
+        legend.title = element_text(size = 14),     
+        legend.text  = element_text(size = 12),     
+        legend.key.size = unit(1.5, "lines")) +
+  coord_cartesian(ylim = c(-0.1, 1), clip = "off")
+
+# Overall inv guild d15N plot
+
+N15.tot.inv.pred.plot <- N15.tot.mod.inv %>% 
+  add_epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    ndraws = 1000),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty")) %>%
+  ggplot(aes(x = .epred, y = 0, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6) + 
+  stat_pointinterval(point_size = 1, pch = 21, position = position_dodge(width = 0.3, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  geom_jitter(data = data_SIA_inv, aes(x = N15, y = 0.3, fill = Treatment), size = 0.6, col = "black", pch = 21, alpha = 0.5, width = 0, height = 0.3) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  xlab(expression(~delta^15*N~"\U2030")) +
+  ylab("") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank(),
+        legend.title = element_text(size = 14),       
+        legend.text  = element_text(size = 12),       
+        legend.key.size = unit(1.5, "lines")) +
+  coord_cartesian(ylim = c(-0.1, 1))
+
+# Fish - species-level plot
+
+em_contrasts <- emmeans(N15.tot.mod.fish.genspe, ~ Treatment | GENSPE)
+species_contrasts <- contrast(em_contrasts, method = list("Ratty - Birdy" = c(1, -1))) %>% as.data.frame() %>%
+  mutate(GENSPE = factor(GENSPE, levels = rev(unique(GENSPE))))
+contrast_draws <- contrast(em_contrasts, method = list("Ratty - Birdy" = c(1, -1))) %>%
+  gather_emmeans_draws()
+
+N15.fish.genspe.plot <- ggplot(contrast_draws %>% mutate(
+         GENSPE = case_when(GENSPE == "Eviota guttata" ~ "E. guttata",
+                            GENSPE == "Eviota distigma" ~ "E. distigma",
+                            GENSPE == "Eviota nebulosa" ~ "E. nebulosa",
+                            GENSPE == "Eviota prasina" ~ "E. prasina",
+                            GENSPE == "Eviota sebreei" ~ "E. sebreei",
+                            GENSPE == "Trimma haima" ~ "T. haima",
+                            GENSPE == "Chlidichthys chagosensis" ~ "C. chagosensis")),
+         aes(x = .value, y = fct_reorder(GENSPE, .value), fill = stat(x))) +
+  geom_density_ridges_gradient(scale = 1.2, rel_min_height = 0.001, alpha = 0.8, color = NA, point_color = "transparent") +
+  stat_pointinterval(aes(color = .value), .width = c(0.95, 0.5), shape = 21, point_size = 3, stroke = 0.3, show.legend = FALSE) +
+  stat_pointinterval(data = species_contrasts  %>% mutate(
+         GENSPE = case_when(GENSPE == "Eviota guttata" ~ "E. guttata",
+                            GENSPE == "Eviota distigma" ~ "E. distigma",
+                            GENSPE == "Eviota nebulosa" ~ "E. nebulosa",
+                            GENSPE == "Eviota prasina" ~ "E. prasina",
+                            GENSPE == "Eviota sebreei" ~ "E. sebreei",
+                            GENSPE == "Trimma haima" ~ "T. haima",
+                            GENSPE == "Chlidichthys chagosensis" ~ "C. chagosensis")),
+    aes(x = estimate, y = GENSPE, color = estimate, xmin = lower.HPD, xmax = upper.HPD), .width = c(0.95, 0.5),
+    point_size = 3, stroke = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_fill_gradient2(low = "#BF0033", high = "#0067A4", midpoint = 0, name = "Effect\n(Birdy - Ratty)") +
+  scale_color_gradient2(low = "#BF0033", high = "#0067A4", midpoint = 0) +
+  xlab(expression(Delta*~delta^15*N~"\U2030")) +
+  ylab("Species") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 7)) +
+  scale_y_discrete(labels = function(x) parse(text = paste0("italic('", x, "')")))
+
+# Inv - taxon-level plot
+
+em_contrasts_inv <- emmeans(N15.tot.mod.inv.fam, ~ Treatment | Taxa)
+species_contrasts_inv <- contrast(em_contrasts_inv, method = list("Ratty - Birdy" = c(1, -1))) %>% as.data.frame() %>%
+  mutate(Taxa = factor(Taxa, levels = rev(unique(Taxa))))
+contrast_draws_inv <- contrast(em_contrasts_inv, method = list("Ratty - Birdy" = c(1, -1))) %>%
+  gather_emmeans_draws()
+
+N15.inv.fam.plot <- ggplot(contrast_draws_inv, aes(x = .value, y = fct_reorder(Taxa, .value), fill = stat(x))) +
+  geom_density_ridges_gradient(scale = 1.2, rel_min_height = 0.001, alpha = 0.8, color = NA, point_color = "transparent") +
+  stat_pointinterval(aes(color = .value), .width = c(0.95, 0.5), shape = 21, point_size = 3, stroke = 0.3, show.legend = FALSE) +
+  stat_pointinterval(data = species_contrasts_inv,
+    aes(x = estimate, y = Taxa, color = estimate, xmin = lower.HPD, xmax = upper.HPD),
+    .width = c(0.95, 0.5), point_size = 3, stroke = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  scale_fill_gradient2(low = "#BF0033", high = "#0067A4", midpoint = 0) +
+  scale_color_gradient2(low = "#BF0033", high = "#0067A4", midpoint = 0) +
+  xlab(expression(Delta*~delta^15*N~"\U2030")) +
+  ylab("Family") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 7))
+
+# TL - d15N preds + plots
+
+N15.TL.fish.pred <- data_SIA_fish %>% 
+  mutate(logTL = log(TL), TL_c = logTL - mean(logTL, na.rm = T)) %>% 
+  group_by(Treatment, Site) %>%  
+  data_grid(TL_c = seq_range(TL_c, n = 100), Treatment) %>%
+  add_epred_draws(N15.TL.fish.log, ndraws = 1000, re_formula = NA) 
+
+N15.TL.inv.pred <- data_SIA_inv %>% 
+  mutate(logLength = log(Length), Length_c = logLength - mean(logLength, na.rm = T)) %>% 
+  group_by(Treatment, Site) %>%  
+  data_grid(Length_c = seq_range(Length_c, n = 100), Treatment) %>%
+  add_epred_draws(N15.TL.inv.log, ndraws = 1000, re_formula = NA) 
+
+
+N15.TL.fish.pred.plot <- ggplot(N15.TL.fish.pred, aes(x = TL_c, y = .epred, color = Treatment)) +
+  stat_lineribbon(aes(y = .epred, color = Treatment, fill = Treatment), .width = .5) +
+  geom_point(data = data_SIA_fish %>% mutate(logTL = log(TL), TL_c = logTL - mean(logTL, na.rm = T)), 
+             aes(col = Treatment, y = N15, fill = Treatment), size = 0.6, alpha = 0.5, pch = 21, color = "black") +
+  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.2), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(legend.position = c(0.87, 0.87),
+        panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank()) +
+  ylab(expression(~delta^15*N~"\U2030")) +
+  labs(x = "Centered log-length (mm)") +
+  theme(legend.position = "none") +
+  inset_element(slope_TL_fish.plot, 0, 0.6, 0.6, 1.1)
+
+N15.TL.inv.pred.plot <- ggplot(N15.TL.inv.pred, aes(x = Length_c, y = .epred, color = Treatment)) +
+  stat_lineribbon(aes(y = .epred, color = Treatment, fill = Treatment), .width = .50) +
+  annotation_custom(img_inv, xmin = -0.5, xmax = 2, ymin = 13.5, ymax = 16.5) +
+  geom_point(data = data_SIA_inv %>% mutate(logLength = log(Length), Length_c = logLength - mean(logLength, na.rm = T)), 
+             aes(col = Treatment, y = N15, fill = Treatment), size = 0.6, alpha = 0.5, pch = 21, color = "black") +
+  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.2), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank()) +
+  ylab(expression(~delta^15*N~"\U2030")) +
+  labs(x = "Centered log-length (mm)") +
+  theme(legend.position = "none") +
+  coord_cartesian(clip = "off") +
+  inset_element(slope_TL_inv.plot, 0, 0.6, 0.6, 1.1) 
+
+# Slope fish
+
+slope_TL_fish.plot <- ggplot(draws, aes(x = pct_diff)) +
+  geom_density(fill = "skyblue", alpha = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  labs(x = "", y = "Increase (%)") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(),
+        plot.background = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 5),
+        axis.title.y = element_text(size = 6)) + 
+  scale_x_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 50))
+
+# Slope inv
+
+slope_TL_inv.plot <- ggplot(draws_inv, aes(x = pct_diff)) +
+  geom_density(fill = "skyblue", alpha = 0.6) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  labs(x = "", y = "Increase (%)") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(),
+        plot.background = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 5),
+        axis.title.y = element_text(size = 6)) + 
+  scale_x_continuous(limits = c(-50, 100), breaks = seq(-50, 100, by = 50))
+
+# Figure 2
+
+fig2 <- ggarrange(ggarrange(N15.tot.fish.pred.plot, N15.TL.fish.pred.plot,
+                    N15.tot.inv.pred.plot, N15.TL.inv.pred.plot,
+                    nrow = 1, common.legend = T, legend = "top", labels = c("a", "b", "c", "d")), 
+          ggarrange(N15.fish.genspe.plot + rremove("legend"), N15.inv.fam.plot + rremove("legend"), 
+                    nrow = 1, labels = c("e", "f")),
+          nrow = 2, ncol = 1)
+
+fig2
+
+#ggsave("figures/main/Fig2.png", fig2, width = 9, height = 6, units = "in", dpi = 600)
+
+```
+
+# I. 2. Isotopic niche
+
+```{r fig3-data}
+
+# 1. Format data 
+
+data_siber_fish <- data_SIA_fish_mm %>% 
+  rename(Length = TL, Taxa = GENSPE) %>% 
+  select(Taxon, N15, C13, Treatment, Taxa, Atoll, Island, Site, Length, W)
+
+data_siber_inv <- data_SIA_inv_mm %>% 
+  select(Taxon, N15, C13, Treatment, Taxa, Atoll, Island, Site, Length, W)
+  
+data_siber_both <- rbind(data_siber_inv, data_siber_fish) %>% 
+  select(N15, C13, Treatment, Taxon) %>% 
+  rename(iso1 = N15, iso2 = C13, group = Treatment, community = Taxon) %>% 
+  filter(!is.na(iso1) & !is.na(iso2)) %>% 
+  as.data.frame()
+
+plot.data <- rbind(data_SIA_inv_mm, data_SIA_fish_mm %>% rename(Taxa = GENSPE, Length = TL)) %>% 
+  select(N15, C13, Treatment, Taxon, Taxa)
+
+plot.data1 <- rbind(data_SIA_inv_mm, data_SIA_fish_mm %>% rename(Taxa = GENSPE, Length = TL)) %>% 
+  select(N15, C13, Treatment, Taxon) %>% 
+  group_by(Taxon, Treatment) %>% 
+  na.omit() %>%
+  summarise(count = n(),
+            mC = mean(C13), 
+            sdC = sd(C13), 
+            mN = mean(N15), 
+            sdN = sd(N15)) %>% 
+  mutate(image_bw = case_when(Taxon == "Fish" ~ "figures/silhouettes/Eviogutt.png",
+                           Taxon == "Inv" ~ "figures/silhouettes/inv.png",
+                           TRUE ~ NA))
+
+# create siber objects
+
+siber.data <- createSiberObject(data_siber_both)
+
+siber.data.fish <- data_siber_fish %>% 
+  select(N15, C13, Treatment, Taxa) %>% 
+  rename(iso1 = N15, iso2 = C13, group = Treatment, community = Taxa) %>% 
+  filter(!is.na(iso1) & !is.na(iso2)) %>% 
+  as.data.frame() %>% 
+  createSiberObject()
+
+siber.data.inv <- data_siber_inv %>% 
+  select(N15, C13, Treatment, Taxa) %>% 
+  rename(iso1 = N15, iso2 = C13, group = Treatment, community = Taxa) %>% 
+  filter(!is.na(iso1) & !is.na(iso2)) %>% 
+  as.data.frame() %>% 
+  createSiberObject()
+
+# 2. Isotopic niche metrics
+
+# % overlap
+
+overlap.G1.1.G2.2 <- maxLikOverlap("Fish.Ratty", "Inv.Ratty", siber.data, p = 0.95, n = 100)
+prop.overlap.ratty <- as.numeric(overlap.G1.1.G2.2["overlap"] / overlap.G1.1.G2.2["area.1"])
+print(prop.overlap.ratty) #70.4% overlap
+
+overlap.G1.2.G2.1 <- maxLikOverlap("Fish.Birdy", "Inv.Birdy", siber.data, p = 0.95, n = 100)
+prop.overlap.birdy <- as.numeric(overlap.G1.2.G2.1["overlap"] / overlap.G1.2.G2.1["area.1"])
+print(prop.overlap.birdy) #98.4% overlap
+
+# SEA - Table S6
+
+group.ML.inv <- groupMetricsML(siber.data.inv)
+print(group.ML.inv)
+
+group.ML.fish <- groupMetricsML(siber.data.fish)
+print(group.ML.fish)
+
+group.ML.both <- groupMetricsML(siber.data)
+print(group.ML.both)
+
+# 3. Calculate ellipses
+
+# Inverse Wishart prior
+# on the covariance matrix Sigma, and a vague normal prior on the 
+# means. Fitting is via the JAGS method.
+# options for running jags
+parms <- list()
+parms$n.iter <- 2 * 10^4   
+parms$n.burnin <- 1 * 10^3 
+parms$n.thin <- 10    
+parms$n.chains <- 2        
+
+# define priors
+priors <- list()
+priors$R <- 1 * diag(2)
+priors$k <- 2
+priors$tau.mu <- 1.0E-3
+
+ellipses.posterior.both <- siberMVN(siber.data, parms, priors)
+siber_pseudo_SEAc_both <- siberEllipses(ellipses.posterior.both)
+
+# 4. Calculate posterior overlap - Fig. 3c
+# takes a long time
+overlap_ratty <- bayesianOverlap(
+  ellipse1 = "Fish.Ratty",
+  ellipse2 = "Inv.Ratty",
+  ellipses.posterior = ellipses.posterior.both,
+  draws = 4000,
+  p.interval = 0.95,
+  n = 100,
+  do.plot = FALSE) %>% as.data.frame() %>% 
+    mutate(Treatment = "Ratty",
+    prop_overlap_union = overlap / (area1 + area2),
+    prop_overlap_1 = overlap / area1,
+    prop_overlap_2 = overlap / area2)
+
+overlap_birdy <- bayesianOverlap(
+  ellipse1 = "Fish.Birdy",
+  ellipse2 = "Inv.Birdy",
+  ellipses.posterior = ellipses.posterior.both,
+  draws = 4000,
+  p.interval = 0.95,
+  n = 100,
+  do.plot = FALSE) %>% as.data.frame() %>% 
+    mutate(Treatment = "Birdy",
+    prop_overlap_union = overlap / (area1 + area2),
+    prop_overlap_1 = overlap / area1,
+    prop_overlap_2 = overlap / area2)
+
+# 5. Calculate SEA per guild - Fig. 3b
+
+SEA.B <- siberEllipses(ellipses.posterior.both)
+sea_data <- as.data.frame(SEA.B)
+colnames(sea_data) <- c("Fish_Birdy", "Fish_Ratty", "Invertebrate_Ratty", "Invertebrate_Birdy")
+
+sea_long <- sea_data %>%
+  pivot_longer(cols = everything(), names_to = "Taxon_Treatment", values_to = "SEA") %>%
+  separate(Taxon_Treatment, into = c("Taxon", "Treatment"), sep = "_")
+
+```
+
+```{r fig3-plots}
+
+# Ellipses - Fig 3a
+
+plot_ellipse_treatment <- ggplot(plot.data %>% mutate(Taxon = ifelse(Taxon == "Inv", "Invertebrate", Taxon))) +
+  stat_ellipse(aes(x = C13, y = N15, group = Taxon, fill = Treatment, color = Treatment, linetype = Taxon), 
+               alpha = 0.25, type = "norm", geom = "polygon") +
+  geom_errorbar(data = plot.data1,  aes(x = mC, y = mN,
+                                        ymin = mN - 1.96*sdN,
+                                        ymax = mN + 1.96*sdN, col = Treatment), width = 0) +
+  geom_errorbar(data = plot.data1, aes(x = mC, y = mN,
+                                       xmin = mC - 1.96*sdC,
+                                       xmax = mC + 1.96*sdC, col = Treatment), width = 0) +
+  geom_image(data = plot.data1, aes(x = mC, y = mN, image = image_bw), size = 0.4, position = position_nudge(x = 0.2)) +
+  geom_point(aes(x = C13, y = N15, col = Treatment, shape = Taxon), size = 0.5) +
+  xlab(expression(~delta^13*C~"\U2030")) +
+  ylab(expression(~delta^15*N~"\U2030")) +
+  scale_x_continuous(breaks = breaks_pretty()) +
+  scale_y_continuous(breaks = breaks_pretty()) +
+  facet_wrap(~Treatment, scales = "free") +
+  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.5), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.3), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_linetype_manual(values = c(2,3), labels = c("Fish", "Invertebrate")) +
+  theme(panel.background = element_rect(fill='transparent'),
+    strip.background = element_rect(fill="white"),
+    axis.line = element_line(colour = "black"),
+    strip.text = element_blank(),
+    legend.position = "top") +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status"),
+         linetype = guide_legend(nrow = 1, title = "Guild"),
+         shape = guide_legend(nrow = 1, title = "Guild")) +
+  coord_cartesian(ylim = c(4,14), xlim = c(-25,0))
+
+# Overlap - Fig. 3c
+
+overlap_df <- rbind(overlap_ratty, overlap_birdy)
+
+niche_overlap.plot <- ggplot(overlap_df %>% mutate(Treatment = ifelse(Treatment == "Birdy", "Seabird-rich", "Rat-infested")), 
+                         aes(y = overlap/area1, x = Treatment, fill = Treatment, col = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width = c(.95,.5), scale = 1, slab_alpha = 0.6, point_size = 0.8) + 
+  labs(y = "Overlap (%)", x = "Island status") +
+  scale_fill_manual(values = alpha(c("#BF0033", "#0067A4"), 0.3), labels = c("Rat-infested", "Seabird-rich")) +
+  scale_color_manual(values = alpha(c("#BF0033", "#0067A4"), 0.5), labels = c("Rat-infested", "Seabird-rich")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 10),
+        legend.position = "none",
+        axis.ticks.x = element_blank(),) +
+  coord_cartesian(clip = "off")
+
+niche_overlap.plot
+
+# SEA per guild and treatment - Fig. 3b
+
+sea_guild.plot <- ggplot(sea_long %>% mutate(Taxon = factor(Taxon, levels = c("Invertebrate", "Fish")), Treatment = factor(Treatment, levels = c("Birdy", "Ratty"))), 
+                         aes(x = SEA, y = Taxon, fill = Treatment, col = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width= c(.95,.5), slab_alpha = 0.6, point_size = 0.8, position = position_dodge(0.8)) + 
+  annotation_custom(img_fish, xmin = -1, xmax = 2, ymin = 2, ymax = 2.5) +
+  annotation_custom(img_inv, xmin = -1, xmax = 2, ymin = 1, ymax = 1.5) +
+  labs(y = "Guild",
+    x = expression("Standard Ellipse Area ("*permille^2*")")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.3), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.5), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 10),
+        legend.position = "none",
+        axis.ticks.y = element_blank()) +
+  coord_cartesian(clip = "off")
+
+sea_guild.plot
+
+fig3 <- ggarrange(plot_ellipse_treatment, 
+                  ggarrange(sea_guild.plot, niche_overlap.plot, widths = c(1, 0.6), align = "h", nrow = 1, labels = c("b", "c")),
+                  nrow = 2, ncol = 1, labels = c("a", ""))
+
+fig3
+
+ggsave("figures/main/Fig3.png", fig3, width = 7, height = 5, units = "in", dpi = 600)
+
+```
+
+
+# II. Community analyses
+
+# II. 1. Density and biomass
+
+# II. 1. a. Cryptobenthic fishes
+
+```{r fig4a-models-fish}
+
+# 1. Model 
+
+# Format data
+data_site_fish <- fish_data %>% 
+  group_by(Site) %>% 
+  filter(Site != "B") %>% #not all weights were measured so inaccurate biomass
+  summarise(Biomass = sum(W, na.rm = T),
+            Ab = n(), 
+            Area) %>% 
+  distinct(Site, Biomass, Ab, Area) %>% 
+  mutate(Biomass_m = Biomass/Area,
+         Ab_m = Ab/Area) %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  distinct(Atoll, Island, Treatment, Biomass_m, Ab_m)
+
+data_site_fish_fam <- fish_data %>% 
+  group_by(Site) %>% 
+  filter(Site != "B") %>% #not all weights were measured so inaccurate biomass
+  summarise(Biomass = sum(W, na.rm = T),
+            Ab = n(), 
+            Area) %>% 
+  distinct(Site, Biomass, Ab, Area) %>% 
+  mutate(Biomass_m = Biomass/Area,
+         Ab_m = Ab/Area) %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  distinct(Atoll, Island, Treatment, Biomass_m, Ab_m)
+
+# Model
+
+Dens.mod.fish <- brm(Ab_m ~ Treatment + (1|Atoll/Island), data = data_site_fish, family = Gamma(link = "log"), control = list(adapt_delta = 0.999, max_treedepth = 12))
+Biomass_m.mod.fish <- brm(Biomass_m ~ Treatment + (1|Atoll/Island), data = data_site_fish, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+
+# Diagnostics
+
+pp_check(Biomass_m.mod.fish)
+pp_check(Dens.mod.fish)
+
+# Output
+
+summary(Dens.mod.fish)
+summary(Biomass_m.mod.fish)
+hypothesis(Biomass_m.mod.fish, hypothesis = "TreatmentRatty < 0") #96
+hypothesis(Dens.mod.fish, hypothesis = "TreatmentRatty < 0")#84
+
+em_bio <- emmeans(Biomass_m.mod.fish,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+em_dens <- emmeans(Dens.mod.fish,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+data_site_fish %>% group_by(Treatment) %>% summarize(meanDens = mean(Ab_m, na.rm = T))
+data_site_fish %>% group_by(Treatment) %>% summarize(meanBio = mean(Biomass_m, na.rm = T))
+
+```
+
+```{r fig4a-plots-fish}
+
+Dens.pred.plot.fish <-
+  Dens.mod.fish %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula = NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width = c(.95,.5), fatten_point = 2, slab_alpha = 0.6) + 
+  geom_jitter(data = data_site_fish, aes(y = log(Ab_m), x = Treatment, col = Treatment), size = 1) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_y_continuous(breaks = breaks_pretty()) +
+  labs(y = bquote("Log-Density (nb of individuals. " ~m^-2~")")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 9)) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  coord_cartesian(ylim = c(-2, 6))
+
+Biomass_m.pred.plot.fish <-
+  Biomass_m.mod.fish %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula = NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width = c(.95,.5), fatten_point = 2, slab_alpha = 0.6) + 
+  geom_jitter(data = data_site_fish, aes(y = log(Biomass_m), x = Treatment, col = Treatment), size = 1) +
+  annotation_custom(img_fish, xmin = 0.7, xmax = 2.3, ymin = 5.5, ymax = 6.4) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+    scale_y_continuous(breaks = c(-4, -2, 0, 2, 4)) +
+  labs(y = bquote("Log-Biomass (g." ~m^-2~")")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 9)) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  coord_cartesian(ylim = c(-5, 5), clip = "off")
+
+Biomass_m.pred.plot.fish
+
+```
+
+```{r figs2}
+
+# Format data
+
+all_sites <- fish_data %>% filter(Site != "B") %>% distinct(Site)
+all_fams  <- fish_data %>% distinct(FAM)
+
+full_grid <- expand_grid(Site = all_sites$Site, FAM = all_fams$FAM)
+
+observed_fam_data <- fish_data %>%
+  filter(Site != "B") %>%
+  group_by(Site, FAM) %>%
+  summarise(
+    Biomass = sum(W, na.rm = TRUE),
+    Ab = n(),
+    Area = unique(Area),  
+    .groups = "drop")
+
+data_site_fish_fam <- full_grid %>%
+  left_join(observed_fam_data, by = c("Site", "FAM")) %>%
+  mutate(Biomass = replace_na(Biomass, 0),
+    Ab = replace_na(Ab, 0),
+    Area = replace_na(Area, NA)) %>%  
+  mutate(Biomass_m = Biomass / Area,
+    Ab_m = Ab / Area) %>%
+  left_join(site_data, by = c("Site" = "ID")) %>%
+  mutate(Biomass_m = ifelse(is.na(Biomass_m), 0.1, Biomass_m),
+         Ab_m = ifelse(is.na(Ab_m), 0.1, Ab_m),
+         Biomass_m = ifelse(Biomass_m == 0, 0.1, Biomass_m)) %>% 
+  distinct(Site, Atoll, Island, Treatment, FAM, Biomass_m, Ab_m)
+
+# Models
+
+Dens.mod.fish.fam <- brm(Ab_m ~ Treatment*FAM + (1|Atoll/Island) + (1|Site), data = data_site_fish_fam, family = Gamma(link = "log"), control = list(adapt_delta = 0.99, max_treedepth = 12))
+Biomass_m.mod.fish.fam <- brm(Biomass_m ~ Treatment*FAM + (1|Atoll/Island) + (1|Site), data = data_site_fish_fam, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+
+# Output
+
+summary(Biomass_m.mod.fish.fam)
+summary(Dens.mod.fish.fam) 
+
+# Plot
+
+filtered_fish_fam <- data_site_fish_fam %>% 
+  filter(FAM != "Syngnathidae") %>% #just one individual
+  distinct(FAM) %>%
+  pull(FAM)
+
+fish.fam.bio.plot <- Biomass_m.mod.fish.fam %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    FAM = filtered_fish_fam,
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+  ggplot(aes(x = log(.epred), y = FAM, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Biomass (g." ~m^-2~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+fish.fam.dens.plot <- Dens.mod.fish.fam %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    FAM = filtered_fish_fam,
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+  ggplot(aes(x = log(.epred), y = FAM, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Density (nb." ~m^-2~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+figs2 <- ggarrange(fish.fam.bio.plot, fish.fam.dens.plot + rremove("y.text"), widths = c(1.4, 1),
+                             common.legend = T, nrow = 1)
+
+figs2
+
+#ggsave("figures/draft/FigS2.png", figs2, width = 7, height = 6, units = "in", dpi = 600)
+
+```
+
+```{r figs3}
+
+# Format data
+
+all_genspe  <- fish_data %>% filter(GENSPE %in% c("Chlidichthys chagosensis", "Eviota distigma", "Eviota guttata", "Eviota nebulosa", "Eviota prasina", "Eviota sebreei", "Trimma haima")) %>% 
+  distinct(GENSPE)
+
+full_grid <- expand_grid(Site = all_sites$Site, GENSPE = all_genspe$GENSPE)
+
+observed_genspe_data <- fish_data %>%
+  filter(Site != "B") %>%
+  group_by(Site, GENSPE) %>%
+  summarise(
+    Biomass = sum(W, na.rm = TRUE),
+    Ab = n(),
+    Area = unique(Area))
+
+data_site_fish_genspe <- full_grid %>%
+  left_join(observed_genspe_data, by = c("Site", "GENSPE")) %>%
+  mutate(Biomass = replace_na(Biomass, 0),
+    Ab = replace_na(Ab, 0),
+    Area = replace_na(Area, NA)) %>%  
+  mutate(Biomass_m = Biomass / Area,
+    Ab_m = Ab / Area) %>%
+  left_join(site_data, by = c("Site" = "ID")) %>%
+  mutate(Biomass_m = ifelse(is.na(Biomass_m), 0.001, Biomass_m),
+         Ab_m = ifelse(is.na(Ab_m), 0.1, Ab_m)) %>% 
+  distinct(Site, Atoll, Island, Treatment, GENSPE, Biomass_m, Ab_m)
+
+# Models
+
+Dens.mod.fish.genspe <- brm(Ab_m ~ Treatment*GENSPE + (1|Atoll/Island) + (1|Site), data = data_site_fish_genspe, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+Biomass_m.mod.fish.genspe <- brm(Biomass_m ~ Treatment*GENSPE + (1|Atoll/Island) + (1|Site), data = data_site_fish_genspe, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+
+# Output
+
+summary(Biomass_m.mod.fish.genspe)
+summary(Dens.mod.fish.genspe) 
+
+# Plot
+
+filtered_fish_genspe <- data_site_fish_genspe %>% 
+  distinct(GENSPE) %>%
+  pull(GENSPE)
+
+fish.genspe.bio.plot <- Biomass_m.mod.fish.genspe %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    GENSPE = filtered_fish_genspe,
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+  mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty")) %>%
+  mutate(GENSPE = factor(GENSPE, levels = c("Eviota nebulosa", "Eviota guttata", "Chlidichthys chagosensis", "Eviota sebreei", "Trimma haima", "Eviota prasina", "Eviota distigma"))) %>% 
+  ggplot(aes(x = log(.epred), y = GENSPE, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Biomass (g." ~m^-2~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(face="italic"))
+
+fish.genspe.dens.plot <- Dens.mod.fish.genspe %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    GENSPE = filtered_fish_genspe,
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment)) %>%
+  mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty")) %>%
+  mutate(GENSPE = factor(GENSPE, levels = c("Eviota nebulosa", "Eviota guttata", "Chlidichthys chagosensis", "Eviota sebreei", "Trimma haima", "Eviota prasina", "Eviota distigma"))) %>% 
+  ggplot(aes(x = log(.epred), y = GENSPE, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Density (nb." ~m^-2~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(face="italic"))
+
+figs3 <- ggarrange(fish.genspe.bio.plot, fish.genspe.dens.plot + rremove("y.text"), widths = c(1.4, 1),
+                             common.legend = T, nrow = 1)
+
+#ggsave("figures/supp/FigS3.png", figs3, width = 7, height = 7, units = "in", dpi = 600)
+
+```
+
+# II. 1. b. Cryptobenthic invertebrates
+
+```{r fig4b-models-inv}
+
+# Format data
+data_site_invert <- invert_data %>% 
+  group_by(Site) %>% 
+  summarise(Biomass = sum(W, na.rm = T),
+            Ab = n(), 
+            Area) %>% 
+  distinct(Site, Biomass, Ab, Area) %>% 
+  mutate(Biomass_m = Biomass/Area,
+         Ab_m = Ab/Area) %>% 
+  left_join(site_data, by = c("Site" = "ID")) %>% 
+  distinct(Atoll, Island, Treatment, Biomass_m, Ab_m)
+
+# Models
+
+Dens.mod.inv <- brm(Ab_m ~ Treatment + (1|Atoll/Island), data = data_site_invert, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+Biomass_m.mod.inv <- brm(Biomass_m ~ Treatment + (1|Atoll/Island), data = data_site_invert, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+
+# Diagnostics
+
+pp_check(Dens.mod.inv)
+pp_check(Biomass_m.mod.inv)
+
+# Output
+
+summary(Biomass_m.mod.inv)
+summary(Dens.mod.inv)
+
+hypothesis(Biomass_m.mod.inv, hypothesis = "TreatmentRatty > 0") #81
+hypothesis(Dens.mod.inv, hypothesis = "TreatmentRatty > 0")  #66
+
+em_dens_inv <- emmeans(Dens.mod.inv,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi() 
+
+```
+
+```{r fig4b-plots-inv}
+
+Dens.pred.plot.inv <-
+  Dens.mod.inv %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width= c(.95,.5), fatten_point = 2, slab_alpha = 0.6) + 
+  geom_jitter(data = data_site_invert, aes(y = log(Ab_m), x = Treatment, col = Treatment), size = 1) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 9)) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  coord_cartesian(ylim = c(-1, 5))
+
+Biomass_m.pred.plot.inv <-
+  Biomass_m.mod.inv %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  annotation_custom(img_inv, xmin = 0.5, xmax = 2.5, ymin = 3.2, ymax = 4.2) +
+  stat_eye(point_interval = median_hdi, .width= c(.95,.5), fatten_point = 2, slab_alpha = 0.6) + 
+  geom_jitter(data = data_site_invert, aes(y = log(Biomass_m), x = Treatment, col = Treatment), size = 1) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 9)) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  coord_cartesian(ylim = c(-3, 3), clip = "off")
+
+Biomass_m.pred.plot.inv
+```
+
+```{r figs4}
+
+# Format data
+
+all_sites <- invert_data %>% distinct(Site)
+all_fam_inv  <- invert_data %>% filter(Taxa %in% c("Alpheidae", "Galatheidae", "Palaemonidae", "Trapeziidae", "Xanthidae", "Ophiuroidea", "Porcellanidae")) %>%
+  distinct(Taxa)
+
+full_grid <- expand_grid(Site = all_sites$Site, Taxa = all_fam_inv$Taxa)
+
+observed_fam_data_inv <- invert_data %>% 
+  group_by(Site, Taxa) %>%
+  summarise(
+    Biomass = sum(W, na.rm = TRUE),
+    Ab = n(),
+    TL = mean(TL, na.rm = TRUE),
+    W = mean(W, na.rm = TRUE),
+    Area = unique(Area),  
+    .groups = "drop")
+
+data_site_inv_fam <- full_grid %>%
+  left_join(observed_fam_data_inv, by = c("Site", "Taxa")) %>%
+  mutate(Biomass = replace_na(Biomass, 0),
+    Ab = replace_na(Ab, 0),
+    Area = replace_na(Area, NA)) %>%  
+  mutate(Biomass_m = Biomass / Area,
+    Ab_m = Ab / Area) %>%
+  left_join(site_data, by = c("Site" = "ID")) %>%
+  mutate(Biomass_m = ifelse(is.na(Biomass_m), 0.001, Biomass_m),
+         Ab_m = ifelse(is.na(Ab_m), 0.1, Ab_m),
+         Biomass_m = ifelse(Biomass_m == 0, 0.001, Biomass_m)) %>% 
+  distinct(Site, Atoll, Island, Treatment, Taxa, Biomass_m, Ab_m)
+
+# Models
+
+Dens.mod.inv.red.fam <- brm(Ab_m ~ Treatment*Taxa + (1|Atoll/Island) + (1|Site), data = data_site_inv_fam, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+Biomass_m.mod.inv.red.fam <- brm(Biomass_m ~ Treatment*Taxa + (1|Atoll/Island) + (1|Site), data = data_site_inv_fam, family = Gamma(link = "log"), control = list(adapt_delta = 0.99))
+
+# Output
+
+summary(Biomass_m.mod.inv.red.fam)
+summary(Dens.mod.inv.red.fam) 
+
+hypothesis(Biomass_m.mod.red.inv, hypothesis = "TreatmentRatty > 0")
+hypothesis(Dens.mod.red.inv, hypothesis = "TreatmentRatty > 0")
+
+# Plot
+
+filtered_inv_fam <- data_site_inv_fam %>% 
+  distinct(Taxa) %>%
+  pull(Taxa)
+
+inv.red.fam.bio.plot <- Biomass_m.mod.inv.red.fam %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    Taxa = filtered_inv_fam,
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+  mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+  mutate(Taxa = factor(Taxa, levels = c("Galatheidae", "Xanthidae", "Alpheidae", "Palaemonidae", "Porcellanidae", "Ophiuroidea", "Trapeziidae"))) %>% 
+  ggplot(aes(x = log(.epred), y = Taxa, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Biomass (g." ~m^-2~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+inv.red.fam.dens.plot <- Dens.mod.inv.red.fam %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    Taxa = filtered_inv_fam,
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+  mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty")) %>%
+  mutate(Taxa = factor(Taxa, levels = c("Galatheidae", "Xanthidae", "Alpheidae", "Palaemonidae", "Porcellanidae", "Ophiuroidea", "Trapeziidae"))) %>% 
+  ggplot(aes(x = log(.epred), y = Taxa, color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Density (nb." ~m^-2~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+figs4 <- ggarrange(inv.red.fam.bio.plot, inv.red.fam.dens.plot + rremove("y.text"), 
+                             common.legend = T, nrow = 1)
+
+figs4
+
+#ggsave("figures/supp/FigS4.png", figs4, width = 6, height = 7, units = "in", dpi = 600)
+
+```
+
+# II. 1. c. Ratios
+
+```{r fig4c-data}
+
+# Format data
+
+data_invert_num <- invert_data %>%
+  group_by(Site) %>% 
+  mutate(n = n(),
+         biomass = sum(W, na.rm = T),
+         Taxon = "Inv") %>% 
+  distinct(Site, n, biomass, Taxon, Treatment, Atoll, Island)
+
+data_fish_num <- fish_data %>% 
+  group_by(Site) %>% 
+  filter(Site != "B") %>% 
+  mutate(n = n(),
+         biomass = sum(W, na.rm = T),
+         Taxon = "Fish") %>% 
+  distinct(Site, n, biomass, Taxon, Treatment, Atoll, Island)
+
+data_num <- rbind(data_invert_num, data_fish_num) %>% 
+  pivot_wider(names_from = Taxon, values_from = c(n, biomass)) %>% 
+  mutate(ratio_n = n_Fish/n_Inv,
+         ratio_biomass = biomass_Fish/biomass_Inv)
+
+data_num %>% ungroup() %>% filter(Treatment == "Birdy") %>% summarize(mean_ratio = mean(ratio_biomass, na.rm = T)) #5.2
+data_num %>% ungroup() %>% filter(Treatment == "Ratty") %>% summarize(mean_ratio = mean(ratio_biomass, na.rm = T)) #0.9
+
+```
+
+```{r fig4c-models}
+
+# Models
+
+ratio_n.mod <- brm(ratio_n ~ Treatment + (1|Atoll/Island), data = data_num, family = lognormal, control = list(adapt_delta = 0.999, max_treedepth = 12))
+ratio_biomass.mod <- brm(ratio_biomass ~ Treatment + (1|Atoll/Island), data = data_num, family = lognormal, control = list(adapt_delta = 0.99, max_treedepth = 12))
+get_prior(ratio_biomass.mod)
+
+# Diagnostics
+
+pp_check(ratio_biomass.mod)
+pp_check(ratio_n.mod)
+
+# Output
+
+summary(ratio_n.mod)
+summary(ratio_biomass.mod)
+
+hypothesis(ratio_n.mod, "TreatmentRatty < 0") #89
+hypothesis(ratio_biomass.mod, "TreatmentRatty < 0") #97
+
+# Plots
+
+ratio_n.pred.plot <- ratio_n.mod %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width= c(.95,.5), fatten_point = 2, slab_alpha = 0.6) +
+  geom_jitter(data_num, mapping = aes(x = Treatment, y = log(ratio_n), col = Treatment), size = 1) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_y_continuous(breaks = c(-4, -2, 0, 2, 4)) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(y = bquote("Log-Density-Ratio")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 9)) +
+  coord_cartesian(ylim = c(-4, 5))
+
+ratio_biomass.pred.plot <- ratio_biomass.mod %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_eye(point_interval = median_hdi, .width= c(.95,.5), fatten_point = 2, slab_alpha = 0.6) + 
+  geom_jitter(data_num, mapping = aes(x = Treatment, y = log(ratio_biomass), col = Treatment), size = 1) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(y = bquote("Log-Biomass-Ratio")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(size = 9)) 
+
+```
+
+```{r fig4-plot}
+
+fig4 <- ggarrange(
+          Biomass_m.pred.plot.fish + rremove("ticks") + rremove("xlab") + rremove("x.text"), 
+          Biomass_m.pred.plot.inv + rremove("ticks") + rremove("y.title") + rremove("xylab") + rremove("x.text"),
+          ratio_biomass.pred.plot + rremove("ticks") + rremove("xlab") + rremove("x.text"),
+          Dens.pred.plot.fish + rremove("ticks") + rremove("xlab") + rremove("x.text"),
+          Dens.pred.plot.inv + rremove("ticks") + rremove("y.title") + rremove("xylab") + rremove("x.text"),
+          ratio_n.pred.plot + rremove("ticks") + rremove("xlab") + rremove("x.text"), align = "h",
+          common.legend = T, legend = "bottom", labels = c("a", "b", "c", "","", ""),
+          hjust = c(-4.3, -1.2, -4.9, 0, 0, 0), vjust = -0.5, 
+          ncol = 3, nrow = 2) +
+  theme(plot.margin = margin(1,0,0,0, "cm")) 
+
+fig4
+
+#ggsave("figures/main/Fig4.png", fig4, width = 6, height = 5, units = "in", dpi = 600)
+
+```
+
+# II. 2. RDA
+
+```{r RDA-fish}
+
+data_com_fish <- fish_data %>% 
+    dplyr::select(Site, GENSPE) %>% 
+    group_by(Site, GENSPE) %>% 
+    mutate(abundance = n()) %>% 
+    distinct(GENSPE, Site, abundance, .keep_all = T) %>% 
+    ungroup() %>% 
+    rename(sample.id = Site,
+           taxon = GENSPE) 
+  
+site_names <- fish_data %>% 
+    distinct(Site) %>% 
+    pull(Site) 
+  
+taxon_names <- data_com_fish %>% 
+    distinct(taxon) %>% 
+    pull(taxon) %>% 
+    sort(.)
+  
+data_com_fish <- matrify(data.matrix(data_com_fish))
+  
+rownames(data_com_fish) <- site_names
+colnames(data_com_fish) <- taxon_names
+
+Treatment <- site_data %>% 
+  filter(Condition == "ok") %>%
+  dplyr::select(Treatment) %>% 
+  unlist()
+
+# run RDA
+data_env <- fish_data %>% 
+  mutate(Atoll = case_when(Atoll == "Peros Banhos" ~ "PB",
+                   Atoll == "Great Chagos Bank" ~ "GCB",
+                   Atoll == "Salomon" ~ "Sal",
+                   TRUE ~ NA_character_)) %>% 
+  distinct(Site, Treatment, Atoll) 
+
+com_RDA_fish <- rda(data_com_fish ~ Treatment + Atoll, data_env)
+
+# results
+RsquareAdj(com_RDA_fish)
+summary(com_RDA_fish)
+anova.cca(com_RDA_fish, step = 1000, by = "term")
+
+```
+
+```{r RDA-inv}
+
+data_com_inv <- invert_data %>% 
+    dplyr::select(Site, Taxa) %>% 
+    group_by(Site, Taxa) %>% 
+    mutate(abundance = n()) %>% 
+    distinct(Taxa, Site, abundance, .keep_all = T) %>% 
+    ungroup() %>% 
+    rename(sample.id = Site,
+           taxon = Taxa) 
+  
+site_names <- invert_data %>% 
+    distinct(Site) %>% 
+    pull(Site) 
+  
+taxon_names <- data_com_inv %>% 
+    distinct(taxon) %>% 
+    pull(taxon) %>% 
+    sort(.)
+  
+data_com_inv <- matrify(data.matrix(data_com_inv))
+  
+rownames(data_com_inv) <- site_names
+colnames(data_com_inv) <- taxon_names
+
+Treatment <- site_data %>% 
+  filter(Condition == "ok") %>%
+  dplyr::select(Treatment) %>% 
+  unlist()
+
+# run RDA
+com_RDA_inv <- rda(data_com_inv ~ Treatment + Atoll, data_env)
+
+# results
+RsquareAdj(com_RDA_inv)
+summary(com_RDA_inv)
+anova.cca(com_RDA_inv, step = 1000, by = "term")
+
+```
+
+# II. 3. Simper
+
+```{r simper-fish}
+
+simper_fish <- simper(data_com_fish,
+                        group = data_env$Treatment,
+                        permutations = 999)
+
+simper_fish_df <- summary(simper_fish)[1] %>% 
+  as.data.frame()
+```
+
+
+```{r simper-inv}
+
+#Pr/ab
+
+simper_inv <- simper(data_com_inv,
+                        group = data_env$Treatment,
+                        permutations = 999)
+
+simper_inv_df <- summary(simper_inv)[1] %>% 
+  as.data.frame()
+```
+
+# III. Higher trophic levels
+
+# III. 1. Mixing models
+
+```{r figs1}
+
+# Reliance on d13C (planktonic resources) with length
+
+p1 <- ggplot(data_SIA_fish_mm %>% 
+  filter(GENSPE == "Chlidichthys chagosensis"), aes(x = Length, y = C13)) +
+  geom_point() +
+  geom_vline(xintercept = 30, col = "red", linetype = "dashed") +
+  ylab(expression(~delta^13*C~"\U2030")) +
+  xlab("Length (mm)") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        legend.title = element_text(size = 14),       
+        legend.text  = element_text(size = 12),       
+        legend.key.size = unit(1.5, "line")) +
+  coord_cartesian(xlim = c(12, 42))
+
+p2 <- ggplot(data_SIA_fish_mm %>% 
+  filter(GENSPE == "Chlidichthys chagosensis"), aes(x = Length)) +
+  geom_histogram() +
+  geom_vline(xintercept = 30, col = "red", linetype = "dashed") +
+  ylab("Density") +
+  xlab("Length (mm)") +
+  scale_y_continuous(breaks = c(0,4,8)) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        legend.title = element_text(size = 14),       
+        legend.text  = element_text(size = 12),       
+        legend.key.size = unit(1.5, "line")) +
+  coord_cartesian(xlim = c(12, 42))
+  
+
+p3 <- ggplot(data_SIA_fish_mm %>% 
+  filter(GENSPE == "Chlidichthys chagosensis") %>% 
+  mutate(Group = case_when(
+    Length < 30 ~ "< 30 mm",
+    Length > 30 ~ "> 30 mm")), aes(x = Length, y = C13)) +
+  geom_vline(xintercept = 30, col = "red", linetype = "dashed") +
+  geom_boxplot(aes(group = Group)) +
+  ylab(expression(~delta^13*C~"\U2030")) +
+  xlab("Length (mm)") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        legend.title = element_text(size = 14),       
+        legend.text  = element_text(size = 12),       
+        legend.key.size = unit(1.5, "line")) +
+  coord_cartesian(xlim = c(12, 42))
+
+chag_all  <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% transmute(Group = "C. chagosensis (all)", C13)
+chag_lt30 <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% filter(Length < 30)  %>% transmute(Group = "C. chagosensis < 30 mm",  C13)
+chag_ge30 <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% filter(Length > 30) %>% transmute(Group = "C. chagosensis \u2265 30 mm", C13)
+
+fish <- data_SIA_fish_mm %>% filter(GENSPE != "Chlidichthys chagosensis") %>% transmute(Group = "Other cryptobenthic fishes", C13)
+inv <- data_SIA_inv_mm %>% transmute(Group = "Cryptobenthic invertebrates", C13)
+
+plot_df <- bind_rows(chag_all, chag_lt30, chag_ge30, fish, inv) %>%
+  mutate(Group = factor(Group, levels = c(
+    "C. chagosensis (all)",
+    "C. chagosensis < 30 mm",
+    "C. chagosensis \u2265 30 mm",
+    "Other cryptobenthic fishes",
+    "Cryptobenthic invertebrates")))
+
+p4 <- ggplot(plot_df, aes(x = Group, y = C13)) +
+  geom_boxplot() +
+  labs(x = NULL,
+    y = expression(delta^13*C~"\u2030")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        legend.title = element_text(size = 14),       
+        legend.text  = element_text(size = 12),       
+        legend.key.size = unit(1.5, "line"))
+
+figs1 <- ggarrange(p2 + rremove("x.text") + rremove("xlab") + rremove("x.ticks"), 
+                   p1 + rremove("x.text") + rremove("xlab") + rremove("x.ticks"), p3, p4, 
+                   nrow = 3, align = "v", labels = c("a", "b", "c", "d"), heights = c(1,1,1.2, 1.2))
+
+#ggsave("figures/supp/FigS1.png", figs1, width = 7, height = 5, units = "in", dpi = 600)
+
+```
+
+
+```{r figs5-data}
+
+# Format data
+
+mix_Chlichag <- data_SIA_fish_mm %>% 
+  filter(GENSPE == "Chlidichthys chagosensis" & Length > 30) %>% 
+  select(C13, N15, Treatment, Length)
+
+mix_fish <- data_SIA_fish_mm %>% 
+  filter(GENSPE != "Chlidichthys chagosensis") %>% 
+  select(C13, N15, Treatment) %>% 
+  mutate(Source = "Fish")
+
+mix_inv <- data_SIA_inv_mm %>% 
+  select(C13, N15, Treatment) %>% 
+  mutate(Source = "Invertebrate")
+
+sources <- rbind(mix_fish, mix_inv) %>% 
+  select(Source, C13, N15, Treatment) %>% 
+  group_by(Source, Treatment) %>% 
+  summarize(MeanC13 = mean(C13, na.rm = T), MeanN15 = mean(N15, na.rm = T), SDN15 = sd(N15, na.rm = T), SDC13 = sd(C13, na.rm = T), n = n()) %>% 
+  ungroup()
+
+write.csv(mix_Chlichag, "output_data/mix_Chlichag.csv", row.names = FALSE)
+write.csv(sources, "output_data/sources.csv", row.names = FALSE)
+
+# Load the mixture/consumer data
+Chlichag_mix <- load_mix_data("output_data/mix_Chlichag.csv", 
+                            iso_names = c("C13","N15"), 
+                            factors = c("Treatment"), 
+                            fac_random = c(FALSE), 
+                            fac_nested = c(FALSE), 
+                            cont_effects = "Length")
+
+sources <- load_source_data("output_data/sources.csv",
+                                         source_factors = "Treatment", 
+                                         conc_dep = FALSE, 
+                                         data_type = "means", 
+                                         Chlichag_mix)
+
+discr_Chlichag_mix <- load_discr_data("data/discr.csv", Chlichag_mix)
+
+```
+
+```{r figs5-models}
+
+# Write the JAGS model file
+model_filename <- "MixSIAR_model_Chlichag.txt"   # Name of the JAGS model file
+resid_err <- TRUE
+process_err <- TRUE
+write_JAGS_model(model_filename, process_err, resid_err, Chlichag_mix, sources)
+
+# run JAGS model (~20 min)
+jags.Chlichag <- run_model(run = "normal", 
+                    Chlichag_mix, 
+                    sources, 
+                    discr_Chlichag_mix, model_filename)
+
+output_options <- list(summary_save = TRUE,
+                       summary_name = "summary_statistics",
+                       sup_post = FALSE,
+                       plot_post_save_pdf = TRUE,
+                       plot_post_name = "posterior_density",
+                       sup_pairs = FALSE,
+                       plot_pairs_save_pdf = TRUE,
+                       plot_pairs_name = "pairs_plot",
+                       sup_xy = TRUE,
+                       plot_xy_save_pdf = FALSE,
+                       plot_xy_name = "xy_plot",
+                       gelman = TRUE,
+                       heidel = FALSE,
+                       geweke = TRUE,
+                       diag_save = TRUE,
+                       diag_name = "diagnostics",
+                       indiv_effect = FALSE,
+                       plot_post_save_png = FALSE,
+                       plot_pairs_save_png = FALSE,
+                       plot_xy_save_png = FALSE,
+                       diag_save_ggmcmc = FALSE,
+                       return_obj = TRUE,
+                       indiv_effect = TRUE)
+
+# assess model fit
+output_JAGS(jags.Chlichag, Chlichag_mix, sources, output_options)
+```
+
+```{r figs5-plots}
+
+g.post <- output_posteriors(jags.Chlichag, Chlichag_mix, sources, output_options)
+
+stats <- as.data.frame(output_stats(jags.Chlichag, Chlichag_mix, sources, output_options)) %>% 
+  rownames_to_column("Source") %>% 
+  select(Mean, Source) %>% 
+  separate(Source, c("val", "Treatment", "Source")) %>% 
+  pivot_wider(names_from = Treatment, values_from = Mean) %>% 
+  filter(val != "Epsilon")
+
+stats
+
+plot.mix.a <- g.post$cont[[1]][[1]] +
+  scale_color_manual(values = c("#440154", "#D57906"), labels = c("Fish", "Invertebrate")) +
+  scale_fill_manual(values = c("#440154", "#D57906"), labels = c("Fish", "Invertebrate")) +
+  xlab("TL (mm)") +
+  labs(title = NULL) +
+  theme_grey() +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title = element_text(size = 10))
+
+plot.mix.b <- g.post$cont[[2]][[1]] + 
+  scale_color_manual(values = c("#D57906")) +
+  scale_fill_manual(values = c("#D57906")) +
+  xlab("TL (mm)") +
+  labs(title = NULL) +
+  theme_grey() +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title = element_text(size = 10))
+
+plot.mix.c <- g.post$fac[[1]] +
+  geom_density(lwd = 0.8, alpha = 0.3, aes(y=..scaled..)) +
+  scale_color_manual(values = c("#440154", "#D57906"), labels = c("Fish", "Invertebrate")) +
+  scale_fill_manual(values = c("#440154", "#D57906"), labels = c("Fish", "Invertebrate")) +
+  geom_vline(data = stats, aes(xintercept = Birdy, col = Source)) +
+  labs(title = NULL) +
+  theme_grey() +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title = element_text(size = 10)) +
+  ggtitle("Seabird-rich")
+
+plot.mix.d <- g.post$fac[[2]] + 
+  geom_density(lwd = 0.8, alpha = 0.3, aes(y=..scaled..)) +
+  scale_color_manual(values = c("#440154", "#D57906"), labels = c("Fish", "Invertebrate")) +
+  scale_fill_manual(values = c("#440154", "#D57906"), labels = c("Fish", "Invertebrate")) +
+  geom_vline(data = stats, aes(xintercept = Ratty, col = Source)) +
+  labs(title = NULL) +
+  theme_grey() +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.title = element_text(size = 10)) +
+  ggtitle("Seabird-poor") +
+  coord_cartesian(clip = "off")
+
+plot.mix <- ggarrange(plot.mix.c + rremove("legend.title"), plot.mix.d + rremove("ylab") + rremove("legend.title"),
+                               plot.mix.a + rremove("legend.title"), plot.mix.b + rremove("ylab") + rremove("legend.title"),
+                               labels = c("a", "b", "c", "d"), vjust = c(0.7, 0.7, -0.4, -0.4),
+                               ncol = 2, nrow = 2, common.legend = T, legend = "top")
+
+plot.mix
+#ggsave("figures/draft/FigS4.png", plot.mix, width = 6, height = 5, units = "in", dpi = 600)
+#ggsave("figures/draft/FigS4.pdf", plot.mix, width = 6, height = 5, units = "in", dpi = 600)
+
+# values
+get_data(plot.mix.a, local_only = FALSE)
+get_data(plot.mix.b, local_only = FALSE)
+#get_data(plot.Enneabel.mix.b, local_only = FALSE)
+```
+
+# III. 2. UVC
+
+```{r fig5-data}
+
+# Format data
+
+uvc_species_list <- data_uvc %>% select(Species, Diet) %>% distinct(Species, Diet)
+
+uvc_transect_list <- read.csv("data/CHA23_UVC_data.csv") %>% 
+  filter(Year %in% c(2021, 2023) & Island %in% c("Ile_de_la_Passe", "Sal_Ile_Anglaise", "Grande_Ile_Coquillage", "PB_Ile_Anglaise", "Yeye", "Middle_Brother", "Eagle")) %>% 
+  filter(Area > 100) %>% 
+  group_by(Atoll, Island, Transect, Treatment, Area, Year) %>% 
+  mutate(Biomass_tot = sum(as.numeric(Weight_m), na.rm = T)) %>% 
+  distinct(Year, Atoll, Island, Transect, Area, Treatment, Biomass_tot)
+
+uvc_inv.biomass.data <- read.csv("data/CHA23_UVC_data.csv") %>% 
+  filter(Diet == "Invertivore" & Year %in% c(2021, 2023)) %>%
+  group_by(Atoll, Island, Transect, Year) %>% 
+  mutate(Biomass = sum(as.numeric(Weight_m), na.rm = T)) %>% 
+  distinct(Atoll, Island, Transect, Treatment, Biomass, Area, Year) %>% 
+  right_join(uvc_transect_list, by = c("Year", "Atoll", "Island", "Transect", "Area", "Treatment")) %>% 
+  mutate(Biomass = ifelse(is.na(Biomass), 1, Biomass),
+         Biomass_prop = (Biomass/Biomass_tot)*100,
+         Diet = "Invertivore")
+
+uvc_pisc.biomass.data <- read.csv("data/CHA23_UVC_data.csv") %>% 
+  filter(Diet == "Piscivore" & Year %in% c(2021, 2023)) %>% 
+  group_by(Atoll, Island, Transect, Year) %>% 
+  mutate(Biomass = sum(as.numeric(Weight_m), na.rm = TRUE)) %>% 
+  distinct(Atoll, Island, Transect, Treatment, Biomass, Area, Year) %>% 
+  right_join(uvc_transect_list, by = c("Year", "Atoll", "Island", "Transect", "Area", "Treatment")) %>% 
+  mutate(Biomass_prop = (Biomass/Biomass_tot)*100,
+         Diet = "Piscivore")
+
+# Load files
+
+traits <- read.csv('data/CHA23_UVC_traits.csv')
+kmax_list <- read.csv('data/DS2.csv') ##Supplemental file from from Morais and Bellwood 2019 with Kmax data in it
+
+```
+
+# III. 2. a. Define priors 
+# Based on data and code from Benkwitt et al. (2019)
+
+```{r prod-priors}
+
+uvc_dat <- read.csv("data/CHA23_UVC_data.csv")
+
+total_reefs_surveyed_benkwitt <- read.csv("data/UVC_priors.csv") %>% filter(Area > 100) %>% distinct(Year, Treatment, Atoll, Island, Transect, Area, Structure, Coral_cover)
+
+# Piscivore priors ----
+
+# Calculate biomass and productivity
+# (see commented version below)
+
+uvc_benkwitt <- read.csv("data/UVC_priors.csv") %>% filter(Diet == "Piscivore" & Area > 100) %>% mutate(Species = str_replace_all(Species, "_", " ")) %>% 
+  left_join(uvc_dat %>% select(Species, a, b), by = "Species") %>% 
+  mutate(a = ifelse(is.na(a.x), a.y, a.x),
+         b = ifelse(is.na(b.x), b.y, b.x),
+         Weight = a*(Length^b),
+         Weight_m = Weight/Area) %>% 
+  select(-a.x, -a.y, -b.x, -b.y, -Abundance)
+
+uvc_benkwitt$Biomass <-as.numeric(uvc_benkwitt$Weight_m) * 10
+
+pisc_dat_sum <-ddply(uvc_benkwitt, c("Year", "Atoll", "Island", "Treatment", "Transect", "Area", "Species"), summarise,
+                     Sum_Bio = sum(Biomass))
+
+pisc_dat_bio_wide <- dcast(pisc_dat_sum, Year + Atoll + Island + Treatment + Transect + Area ~ Species, value.var="Sum_Bio")
+
+pisc_dat_bio_wide[is.na(pisc_dat_bio_wide)]<-0
+
+pisc_sum_bio<-rowSums(pisc_dat_bio_wide[,8:ncol(pisc_dat_bio_wide)])
+
+pisc_chagos_div <- cbind(pisc_dat_bio_wide[1:6],pisc_sum_bio)
+
+kmax_list <- kmax_list[kmax_list$sstmean==28,]
+
+sp_uvc_kmax <- merge(traits, kmax_list, by = c("MaxSizeTL","Diet", "Position"), all.x=TRUE)
+sp_uvc_kmax_2 <- unique(sp_uvc_kmax)
+
+pisc_dat_k <- merge(uvc_benkwitt,sp_uvc_kmax_2, by=c("Species", "Family"), all.x=TRUE )
+pisc_dat_prod <- pisc_dat_k
+
+pisc_dat_k[pisc_dat_k$Length>pisc_dat_k$MaxSizeTL_Prod,]
+
+pisc_dat_prod$EstAge<-(1/pisc_dat_prod$Kmax)*log((pisc_dat_prod$MaxSizeTL_Prod)/((1-pisc_dat_prod$Length/pisc_dat_prod$MaxSizeTL_Prod)*pisc_dat_prod$MaxSizeTL_Prod))
+
+age <- (1:365) / 365
+
+pisc_vb_len_tab <- matrix (ncol = length (age), nrow = nrow (pisc_dat_prod), dimnames = list (NULL, paste ('Day', 1:365, sep="_")))
+
+for (u in 1:nrow (pisc_dat_prod)) {
+  
+  pisc_vb_len_tab [u, ] <- pisc_dat_prod$MaxSizeTL_Prod[u]*(1-exp(-pisc_dat_prod$Kmax[u]*(pisc_dat_prod$EstAge[u]+age))) 
+  
+}
+pisc_vb_wt_tab <- apply (pisc_vb_len_tab, 2, function (x) pisc_dat_prod$a * (x ^ pisc_dat_prod$b))
+
+pisc_wt_kgh_tab <- apply(pisc_vb_wt_tab,2, function (x) x/pisc_dat_prod$Area * 10 )
+
+pisc_biomass_not_rounded_g <- (pisc_dat_prod$a*pisc_dat_prod$Length^pisc_dat_prod$b)
+pisc_vb_wt_tab <- cbind(pisc_biomass_not_rounded_g, pisc_vb_wt_tab)
+colnames(pisc_vb_wt_tab)[1] <- "Day_0"
+pisc_vb_prod_wt_tab <- pisc_vb_wt_tab
+
+for (u in 2:ncol(pisc_vb_prod_wt_tab))
+  for (v in 1:nrow(pisc_vb_prod_wt_tab)) {
+    pisc_vb_prod_wt_tab [v,u ] <- pisc_vb_wt_tab[v,u]-pisc_vb_wt_tab[v,(u-1)]
+  }
+
+pisc_vb_prod_wt_tab2<-pisc_vb_prod_wt_tab[,2:ncol(pisc_vb_prod_wt_tab)]
+
+pisc_dat_prod$logZyear<- (-0.0066-(0.279*log(pisc_dat_prod$MaxSizeTL_Prod))+(0.6543*log(pisc_dat_prod$Kmax))+(0.4634*log(28)))
+pisc_dat_prod$Zyear<-exp(pisc_dat_prod$logZyear)
+
+pisc_dat_prod$Zday<-pisc_dat_prod$Zyear/365
+
+pisc_dat_prod$SurvivalDay<-exp(-pisc_dat_prod$Zday)
+
+pisc_psurv_tab <- matrix (ncol = 365, nrow = nrow (pisc_dat_prod), dimnames = list (NULL, paste ('Day', 1:365)))
+for (u in 1:nrow (pisc_dat_prod)) {
+  pisc_psurv_tab [u, ] <- exp(-pisc_dat_prod$Zday[u]) 
+}
+
+pisc_psurv_cum_tab <- pisc_psurv_tab
+
+for (u in 2:ncol(pisc_psurv_cum_tab))
+  for (v in 1:nrow(pisc_psurv_cum_tab)) {
+    pisc_psurv_cum_tab [v,u ] <- pisc_psurv_cum_tab[v,u]*pisc_psurv_cum_tab[v,(u-1)]
+  }
+
+pisc_psurv_yr<-apply(pisc_psurv_tab, 1, prod)
+
+pisc_surv_outcome_day <- matrix (ncol = 365, nrow = nrow (pisc_psurv_tab))
+
+for (u in 1:nrow(pisc_psurv_tab))
+  for (v in 1:ncol(pisc_psurv_tab)) {
+    pisc_surv_outcome_day [u,v ] <- rbern(1,prob= pisc_psurv_tab[u,v])
+  }
+
+nrow(subset(pisc_surv_outcome_day,rowSums(pisc_surv_outcome_day)!=365))
+nrow(subset(pisc_surv_outcome_day,rowSums(pisc_surv_outcome_day)==365))
+
+zero_row_replace <- function(x){
+  x[which(cumany(x==0))] <- 0
+  return(x)
+}
+
+pisc_surv_outcome_day2<-adply(pisc_surv_outcome_day, 1, zero_row_replace)
+pisc_surv_outcome_day2<-dplyr::select(pisc_surv_outcome_day2, -c(X1)) 
+
+nrow(subset(pisc_surv_outcome_day2,rowSums(pisc_surv_outcome_day2)!=365))
+nrow(subset(pisc_surv_outcome_day2,rowSums(pisc_surv_outcome_day2)==365))
+
+pisc_est_daily_prod_tab <- pisc_surv_outcome_day2*pisc_vb_prod_wt_tab2
+
+pisc_prod_year <- rowSums(pisc_est_daily_prod_tab)
+
+pisc_dat_prod_final <- pisc_dat_prod
+pisc_dat_prod_final$prod_year_g <- pisc_prod_year
+
+pisc_dat_prod_final$prod_year_kg_h <- pisc_dat_prod_final$prod_year_g/pisc_dat_prod_final$Area*10
+
+pisc_prod_trans <- ddply(pisc_dat_prod_final, c("Year", "Treatment", "Atoll", "Island", "Transect", "Area"), summarise,
+                  total_prod_year = sum(prod_year_kg_h))
+
+pisc_chagos_div_prod <- merge(pisc_chagos_div, pisc_prod_trans, by = c("Year", "Treatment", "Atoll", "Island", "Transect", "Area"), all.x=TRUE)
+
+total_pisc.prod <- pisc_chagos_div_prod %>% full_join(total_reefs_surveyed_benkwitt, by = c("Year", "Treatment", "Atoll", "Island", "Transect", "Area")) %>% 
+  mutate(Prod = ifelse(is.na(total_prod_year), 1, total_prod_year),
+         Biomass = ifelse(is.na(pisc_sum_bio), 1, pisc_sum_bio))
+
+# Run lme models
+
+prod_prior_pisc.mod <- lme(log(Prod) ~ Treatment + Year + Structure, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_pisc.prod) 
+summary(prod_prior_pisc.mod)$tTable
+
+# Est = -1.60; SD = 0.67
+
+bio_prior_pisc.mod <- lme(log(Biomass) ~ Treatment + Year + Structure, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_pisc.prod) 
+summary(bio_prior_pisc.mod)$tTable
+
+# Est = -1.94; SD = 0.74
+
+# Invertivore priors ----
+
+# Calculate biomass and productivity
+
+uvc_benkwitt <- read.csv("data/UVC_priors.csv") %>% filter(Diet == "Invertivore" & Area > 100) %>% mutate(Species = str_replace_all(Species, "_", " ")) %>% 
+  left_join(uvc_dat %>% select(Species, a, b), by = "Species") %>% 
+  mutate(a = ifelse(is.na(a.x), a.y, a.x),
+         b = ifelse(is.na(b.x), b.y, b.x),
+         Weight = a*(Length^b),
+         Weight_m = Weight/Area) %>% 
+  select(-a.x, -a.y, -b.x, -b.y, -Coral_cover, -Abundance, -Structure)
+
+uvc_benkwitt$Biomass <-as.numeric(uvc_benkwitt$Weight_m) * 10
+
+inv_dat_sum <-ddply(uvc_benkwitt, c("Year", "Atoll", "Island", "Treatment", "Transect", "Area", "Species"), summarise,
+                     Sum_Bio = sum(Biomass))
+
+inv_dat_bio_wide <- dcast(inv_dat_sum, Year + Atoll + Island + Treatment + Transect + Area ~ Species, value.var="Sum_Bio")
+
+inv_dat_bio_wide[is.na(inv_dat_bio_wide)]<-0
+
+inv_sum_bio<-rowSums(inv_dat_bio_wide[,8:ncol(inv_dat_bio_wide)])
+
+inv_chagos_div <- cbind(inv_dat_bio_wide[1:6],inv_sum_bio)
+
+kmax_list <- kmax_list[kmax_list$sstmean==28,]
+
+sp_uvc_kmax <- merge(traits, kmax_list, by = c("MaxSizeTL","Diet", "Position"), all.x=TRUE)
+sp_uvc_kmax_2 <- unique(sp_uvc_kmax)
+
+inv_dat_k <- merge(uvc_benkwitt,sp_uvc_kmax_2, by=c("Species", "Family"), all.x=TRUE )
+inv_dat_prod <- inv_dat_k
+
+inv_dat_k[inv_dat_k$Length>inv_dat_k$MaxSizeTL_Prod,]
+inv_dat_prod$Length <- ifelse(
+  inv_dat_prod$Length > inv_dat_prod$MaxSizeTL_Prod,
+  inv_dat_prod$MaxSizeTL_Prod,
+  inv_dat_prod$Length
+)
+
+inv_dat_prod$EstAge<-(1/inv_dat_prod$Kmax)*log((inv_dat_prod$MaxSizeTL_Prod)/((1-inv_dat_prod$Length/inv_dat_prod$MaxSizeTL_Prod)*inv_dat_prod$MaxSizeTL_Prod))
+
+age <- (1:365) / 365
+
+inv_vb_len_tab <- matrix (ncol = length (age), nrow = nrow (inv_dat_prod), dimnames = list (NULL, paste ('Day', 1:365, sep="_")))
+
+for (u in 1:nrow (inv_dat_prod)) {
+  
+  inv_vb_len_tab [u, ] <- inv_dat_prod$MaxSizeTL_Prod[u]*(1-exp(-inv_dat_prod$Kmax[u]*(inv_dat_prod$EstAge[u]+age))) 
+  
+}
+
+inv_vb_wt_tab <- apply (inv_vb_len_tab, 2, function (x) inv_dat_prod$a * (x ^ inv_dat_prod$b))
+
+inv_wt_kgh_tab <- apply(inv_vb_wt_tab,2, function (x) x/inv_dat_prod$Area * 10 )
+
+inv_biomass_not_rounded_g <- (inv_dat_prod$a*inv_dat_prod$Length^inv_dat_prod$b)
+inv_vb_wt_tab <- cbind(inv_biomass_not_rounded_g, inv_vb_wt_tab)
+colnames(inv_vb_wt_tab)[1] <- "Day_0"
+inv_vb_prod_wt_tab <- inv_vb_wt_tab
+
+for (u in 2:ncol(inv_vb_prod_wt_tab))
+  for (v in 1:nrow(inv_vb_prod_wt_tab)) {
+    inv_vb_prod_wt_tab [v,u ] <- inv_vb_wt_tab[v,u]-inv_vb_wt_tab[v,(u-1)]
+  }
+
+inv_vb_prod_wt_tab2<-inv_vb_prod_wt_tab[,2:ncol(inv_vb_prod_wt_tab)]
+
+inv_dat_prod$logZyear<- (-0.0066-(0.279*log(inv_dat_prod$MaxSizeTL_Prod))+(0.6543*log(inv_dat_prod$Kmax))+(0.4634*log(28)))
+inv_dat_prod$Zyear<-exp(inv_dat_prod$logZyear)
+
+inv_dat_prod$Zday<-inv_dat_prod$Zyear/365
+
+inv_dat_prod$SurvivalDay<-exp(-inv_dat_prod$Zday)
+
+inv_psurv_tab <- matrix (ncol = 365, nrow = nrow (inv_dat_prod), dimnames = list (NULL, paste ('Day', 1:365)))
+for (u in 1:nrow (inv_dat_prod)) {
+  inv_psurv_tab [u, ] <- exp(-inv_dat_prod$Zday[u]) 
+}
+
+inv_psurv_cum_tab <- inv_psurv_tab
+
+for (u in 2:ncol(inv_psurv_cum_tab))
+  for (v in 1:nrow(inv_psurv_cum_tab)) {
+    inv_psurv_cum_tab [v,u ] <- inv_psurv_cum_tab[v,u]*inv_psurv_cum_tab[v,(u-1)]
+  }
+
+inv_psurv_yr<-apply(inv_psurv_tab, 1, prod)
+
+inv_surv_outcome_day <- matrix (ncol = 365, nrow = nrow (inv_psurv_tab))
+
+for (u in 1:nrow(inv_psurv_tab))
+  for (v in 1:ncol(inv_psurv_tab)) {
+    inv_surv_outcome_day [u,v ] <- rbern(1,prob= inv_psurv_tab[u,v])
+  }
+
+nrow(subset(inv_surv_outcome_day,rowSums(inv_surv_outcome_day)!=365))
+nrow(subset(inv_surv_outcome_day,rowSums(inv_surv_outcome_day)==365)) 
+
+inv_surv_outcome_day2<-adply(inv_surv_outcome_day, 1, zero_row_replace)
+inv_surv_outcome_day2<-dplyr::select(inv_surv_outcome_day2, -c(X1)) 
+
+nrow(subset(inv_surv_outcome_day2,rowSums(inv_surv_outcome_day2)!=365))
+nrow(subset(inv_surv_outcome_day2,rowSums(inv_surv_outcome_day2)==365))
+
+inv_est_daily_prod_tab <- inv_surv_outcome_day2*inv_vb_prod_wt_tab2
+
+inv_prod_year <- rowSums(inv_est_daily_prod_tab)
+
+inv_dat_prod_final <- inv_dat_prod
+inv_dat_prod_final$prod_year_g <- inv_prod_year
+
+inv_dat_prod_final$prod_year_kg_h <- inv_dat_prod_final$prod_year_g/inv_dat_prod_final$Area*10
+
+inv_prod_trans <- ddply(inv_dat_prod_final, c("Year", "Treatment", "Atoll", "Island", "Transect", "Area"), summarise,
+                  total_prod_year = sum(prod_year_kg_h))
+
+inv_chagos_div_prod <- merge(inv_chagos_div, inv_prod_trans, by = c("Year", "Treatment", "Atoll", "Island", "Transect", "Area"), all.x=TRUE)
+
+total_inv.prod <- inv_chagos_div_prod %>% full_join(total_reefs_surveyed_benkwitt, by = c("Year", "Treatment", "Atoll", "Island", "Transect", "Area")) %>% 
+  mutate(Prod = ifelse(is.na(total_prod_year), 1, total_prod_year),
+         Biomass = ifelse(is.na(inv_sum_bio) | inv_sum_bio == 0, 1, inv_sum_bio))
+
+# Run lme models
+
+prod_prior_inv.mod <- lme(log(Prod) ~ Treatment + Year + Structure + Coral_cover, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_inv.prod) 
+summary(prod_prior_inv.mod)$tTable
+
+#Est = 0.43; SD = 0.42
+
+bio_prior_inv.mod <- lme(log(Biomass) ~ Treatment + Year + Structure + Coral_cover, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_inv.prod) 
+summary(bio_prior_inv.mod)$tTable
+
+#Est = 0.31; SD = 0.38
+```
+
+# Piscivore biomass and productivity
+
+```{r fig5-ab}
+
+uvc_dat <- read.csv("data/CHA23_UVC_data.csv")
+
+pisc_dat <- read.csv("data/CHA23_UVC_data.csv") %>% 
+  filter(Year %in% c(2021, 2023) & Island %in% c("Ile_de_la_Passe", "Sal_Ile_Anglaise", "Grande_Ile_Coquillage", "PB_Ile_Anglaise", "Yeye", "Middle_Brother", "Eagle")
+         & Diet == "Piscivore" & Area > 100) %>% 
+  mutate(Biomass = as.numeric(Weight_m)*10)
+
+pisc_dat_bio_wide <- pisc_dat %>% 
+  group_by(Year, Atoll, Island, Treatment, Transect, Species) %>% 
+  summarize(Sum_Bio = sum(Biomass), .groups = "drop") %>% 
+  pivot_wider(names_from = Species, values_from = Sum_Bio, values_fill = 0)
+
+# Sum biomass
+pisc_sum_bio <- rowSums(pisc_dat_bio_wide[,8:ncol(pisc_dat_bio_wide)])
+
+pisc_chagos_div <- cbind(pisc_dat_bio_wide[1:5], pisc_sum_bio) %>% mutate(Year = as.integer(Year))
+
+# combine UVC data with kmax data
+
+# limit list to right temp (28 avg temp Chagos)
+kmax_list <- kmax_list[kmax_list$sstmean==28,]
+
+#merge kmax based on traits with trait info for species
+
+sp_uvc_kmax <- merge(traits, kmax_list, by = c("MaxSizeTL","Diet", "Position"), all.x=TRUE)
+sp_uvc_kmax_2 <- unique(sp_uvc_kmax)
+
+##add column for k values in fish data
+pisc_dat_k <- merge(pisc_dat,sp_uvc_kmax_2, by=c("Species", "Family"), all.x=TRUE )
+pisc_dat_prod <- pisc_dat_k
+
+#calculate prod
+#Derived from Morais & Bellwood 2019 + Benkwitt et al 2019
+
+#check which species estimated length > max length 
+pisc_dat_k[pisc_dat_k$Length>pisc_dat_k$MaxSizeTL_Prod,] #none
+
+#calculate age
+pisc_dat_prod$EstAge<-(1/pisc_dat_prod$Kmax)*log((pisc_dat_prod$MaxSizeTL_Prod)/((1-pisc_dat_prod$Length/pisc_dat_prod$MaxSizeTL_Prod)*pisc_dat_prod$MaxSizeTL_Prod))
+
+#plug back age into VGBF to calculate growth
+age <- (1:365) / 365
+
+#set up table for new lengths: 1 column per day, 1 row per individual fish
+pisc_vb_len_tab <- matrix (ncol = length (age), nrow = nrow (pisc_dat_prod), dimnames = list (NULL, paste ('Day', 1:365, sep="_")))
+
+#for each individual, calculate new length for that day using VBGF formula (written above)
+for (u in 1:nrow (pisc_dat_prod)) {
+  
+  pisc_vb_len_tab [u, ] <- pisc_dat_prod$MaxSizeTL_Prod[u]*(1-exp(-pisc_dat_prod$Kmax[u]*(pisc_dat_prod$EstAge[u]+age))) 
+  
+}
+# LW conversion
+pisc_vb_wt_tab <- apply (pisc_vb_len_tab, 2, function (x) pisc_dat_prod$a * (x ^ pisc_dat_prod$b))
+
+pisc_wt_kgh_tab <- apply(pisc_vb_wt_tab,2, function (x) x/pisc_dat_prod$Area * 10 )
+
+# Production table per day
+pisc_biomass_not_rounded_g <- (pisc_dat_prod$a*pisc_dat_prod$Length^pisc_dat_prod$b)
+pisc_vb_wt_tab <- cbind(pisc_biomass_not_rounded_g, pisc_vb_wt_tab)
+colnames(pisc_vb_wt_tab)[1] <- "Day_0"
+pisc_vb_prod_wt_tab <- pisc_vb_wt_tab
+
+for (u in 2:ncol(pisc_vb_prod_wt_tab))
+  for (v in 1:nrow(pisc_vb_prod_wt_tab)) {
+    pisc_vb_prod_wt_tab [v,u ] <- pisc_vb_wt_tab[v,u]-pisc_vb_wt_tab[v,(u-1)]
+  }
+
+pisc_vb_prod_wt_tab2<-pisc_vb_prod_wt_tab[,2:ncol(pisc_vb_prod_wt_tab)]
+
+# Size-dependant mortality for net productivity
+
+pisc_dat_prod$logZyear<- (-0.0066-(0.279*log(pisc_dat_prod$MaxSizeTL_Prod))+(0.6543*log(pisc_dat_prod$Kmax))+(0.4634*log(28)))
+pisc_dat_prod$Zyear<-exp(pisc_dat_prod$logZyear)
+
+pisc_dat_prod$Zday<-pisc_dat_prod$Zyear/365
+
+# Calculate probability of survival
+#probability of survival = exp(-zday)
+pisc_dat_prod$SurvivalDay<-exp(-pisc_dat_prod$Zday)
+
+# Daily survival probabilities for the year
+pisc_psurv_tab <- matrix (ncol = 365, nrow = nrow (pisc_dat_prod), dimnames = list (NULL, paste ('Day', 1:365)))
+for (u in 1:nrow (pisc_dat_prod)) {
+  pisc_psurv_tab [u, ] <- exp(-pisc_dat_prod$Zday[u]) 
+}
+
+# Cumulative survival = each day*all the days before
+pisc_psurv_cum_tab <- pisc_psurv_tab
+
+for (u in 2:ncol(pisc_psurv_cum_tab))
+  for (v in 1:nrow(pisc_psurv_cum_tab)) {
+    pisc_psurv_cum_tab [v,u ] <- pisc_psurv_cum_tab[v,u]*pisc_psurv_cum_tab[v,(u-1)]
+  }
+
+pisc_psurv_yr<-apply(pisc_psurv_tab, 1, prod)
+
+# Mortality per day
+
+pisc_surv_outcome_day <- matrix (ncol = 365, nrow = nrow (pisc_psurv_tab))
+
+for (u in 1:nrow(pisc_psurv_tab))
+  for (v in 1:ncol(pisc_psurv_tab)) {
+    pisc_surv_outcome_day [u,v ] <- rbern(1,prob= pisc_psurv_tab[u,v])
+  }
+
+nrow(subset(pisc_surv_outcome_day,rowSums(pisc_surv_outcome_day)!=365))
+nrow(subset(pisc_surv_outcome_day,rowSums(pisc_surv_outcome_day)==365)) 
+
+pisc_surv_outcome_day2<-adply(pisc_surv_outcome_day, 1, zero_row_replace)
+pisc_surv_outcome_day2<-dplyr::select(pisc_surv_outcome_day2, -c(X1))
+
+nrow(subset(pisc_surv_outcome_day2,rowSums(pisc_surv_outcome_day2)!=365))
+nrow(subset(pisc_surv_outcome_day2,rowSums(pisc_surv_outcome_day2)==365))
+
+# Production estimates = multiply survival table*production table
+pisc_est_daily_prod_tab <- pisc_surv_outcome_day2*pisc_vb_prod_wt_tab2
+
+# Daily production over a year
+pisc_prod_year <- rowSums(pisc_est_daily_prod_tab)
+
+# Final conversions
+pisc_dat_prod_final <- pisc_dat_prod
+pisc_dat_prod_final$prod_year_g <- pisc_prod_year
+
+# Convert to kg/ha
+pisc_dat_prod_final$prod_year_kg_h <- pisc_dat_prod_final$prod_year_g/pisc_dat_prod_final$Area*10
+
+## Sum productivity by transect
+pisc_prod_trans <- ddply(pisc_dat_prod_final, c("Year", "Treatment", "Atoll", "Island", "Transect"), summarise,
+                  total_prod_year = sum(prod_year_kg_h))
+
+# Combine with other data
+pisc_chagos_div_prod <- merge(pisc_chagos_div, pisc_prod_trans, by = c("Year", "Treatment", "Atoll", "Island", "Transect"), all.x=TRUE)
+
+pisc_chagos_div_prod$Year <- as.numeric(as.character(pisc_chagos_div_prod$Year))
+
+uvc_pisc.prod.data <- uvc_pisc.biomass.data %>% 
+  left_join(pisc_chagos_div_prod, by = c("Year", "Treatment", "Atoll", "Island", "Transect")) %>% 
+  mutate(Prod = as.numeric(total_prod_year), Biomass = as.numeric(pisc_sum_bio)) %>% 
+  mutate(Prod = ifelse(is.na(Prod), 10, Prod + 10),
+         Biomass = ifelse(is.na(Biomass), 10, Biomass + 10))
+
+# Priors calculated above
+
+priors_prod <- c( 
+  prior(normal(-1.60, 0.67), class = "b", coef = "TreatmentRatty"),                    
+  prior(normal(3.5, 0.5), class = "Intercept"),                   
+  prior(normal(0, 0.5), class = "sd"),                            
+  prior(gamma(2, 0.1), class = "shape"))
+
+priors_bio <- c( 
+  prior(normal(-1.94, 0.74), class = "b", coef = "TreatmentRatty"),                  
+  prior(normal(3, 0.5), class = "Intercept"),                    
+  prior(normal(0, 0.5), class = "sd"),                         
+  prior(gamma(2, 0.1), class = "shape"))
+
+# Models
+
+mod.prod.pisc <- brm(Prod ~ Treatment + (1|Atoll/Island) + (1|Year), family = Gamma(link = "log"), prior = priors_prod, 
+                     data = uvc_pisc.prod.data, control = list(adapt_delta = 0.99, max_treedepth = 12))
+
+
+mod.bio.pisc <- brm(Biomass ~ Treatment + (1|Atoll/Island) + (1|Year), prior = priors_bio, family = Gamma(link = "log"), data = uvc_pisc.prod.data)
+
+# Output
+
+summary(mod.prod.pisc)
+summary(mod.bio.pisc)
+
+hypothesis(mod.prod.pisc, "TreatmentRatty < 0")
+hypothesis(mod.bio.pisc, "TreatmentRatty < 0")
+
+em_prod <- emmeans(mod.prod.pisc,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+em_bio <- emmeans(mod.bio.pisc,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+em_bio <- emmeans(mod.bio.pisc,  ~ Treatment, regrid = F) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+em_prod <- emmeans(mod.prod.pisc,  ~ Treatment, regrid = F) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+```
+
+# Invertivore biomass and productivity
+
+```{r fig5-cd}
+
+#data
+
+inv_dat <- read.csv("data/CHA23_UVC_data.csv") %>% 
+  filter(Year %in% c(2021, 2023) & Island %in% c("Ile_de_la_Passe", "Sal_Ile_Anglaise", "Grande_Ile_Coquillage", "PB_Ile_Anglaise", "Yeye", "Middle_Brother", "Eagle")
+         & Diet == "Invertivore" & Area > 100) %>% 
+  mutate(Biomass = as.numeric(Weight_m) * 10)
+
+inv_dat_sum <-ddply(inv_dat, c("Year", "Atoll", "Island", "Treatment", "Transect", "Species"), summarise,
+                     Sum_Bio = sum(Biomass))
+
+inv_dat_bio_wide <- dcast(inv_dat_sum, Year+ Atoll + Island + Treatment + Transect  ~ Species, value.var="Sum_Bio")
+
+inv_dat_bio_wide[is.na(inv_dat_bio_wide)]<-0
+
+inv_sum_bio<-rowSums(inv_dat_bio_wide[,8:ncol(inv_dat_bio_wide)])
+
+inv_chagos_div <- cbind(inv_dat_bio_wide[1:5],inv_sum_bio)
+
+inv_chagos_div$Year <- as.factor(inv_chagos_div$Year)
+
+kmax_list <- kmax_list[kmax_list$sstmean==28,]
+
+sp_uvc_kmax <- merge(traits, kmax_list, by = c("MaxSizeTL","Diet", "Position"), all.x=TRUE)
+sp_uvc_kmax_2 <- unique(sp_uvc_kmax)
+
+inv_dat_k <- merge(inv_dat,sp_uvc_kmax_2, by=c("Species", "Family"), all.x=TRUE )
+
+inv_dat_k[inv_dat_k$Length>inv_dat_k$MaxSizeTL_Prod,] 
+inv_dat_k$Length <- ifelse(
+  inv_dat_k$Length > inv_dat_k$MaxSizeTL_Prod,
+  inv_dat_k$MaxSizeTL_Prod,
+  inv_dat_k$Length)
+
+inv_dat_prod <- inv_dat_k
+
+inv_dat_prod$EstAge<-(1/inv_dat_prod$Kmax)*log((inv_dat_prod$MaxSizeTL_Prod)/((1-inv_dat_prod$Length/inv_dat_prod$MaxSizeTL_Prod)*inv_dat_prod$MaxSizeTL_Prod))
+
+age <- (1:365) / 365
+
+inv_vb_len_tab <- matrix (ncol = length (age), nrow = nrow (inv_dat_prod), dimnames = list (NULL, paste ('Day', 1:365, sep="_")))
+
+for (u in 1:nrow (inv_dat_prod)) {
+  
+  inv_vb_len_tab [u, ] <- inv_dat_prod$MaxSizeTL_Prod[u]*(1-exp(-inv_dat_prod$Kmax[u]*(inv_dat_prod$EstAge[u]+age))) 
+  
+}
+inv_vb_wt_tab <- apply (inv_vb_len_tab, 2, function (x) inv_dat_prod$a * (x ^ inv_dat_prod$b))
+
+inv_wt_kgh_tab <- apply(inv_vb_wt_tab,2, function (x) x/inv_dat_prod$Area * 10 )
+
+inv_biomass_not_rounded_g <- (inv_dat_prod$a*inv_dat_prod$Length^inv_dat_prod$b)
+inv_vb_wt_tab <- cbind(inv_biomass_not_rounded_g, inv_vb_wt_tab)
+colnames(inv_vb_wt_tab)[1] <- "Day_0"
+inv_vb_prod_wt_tab <- inv_vb_wt_tab
+
+for (u in 2:ncol(inv_vb_prod_wt_tab))
+  for (v in 1:nrow(inv_vb_prod_wt_tab)) {
+    inv_vb_prod_wt_tab [v,u ] <- inv_vb_wt_tab[v,u]-inv_vb_wt_tab[v,(u-1)]
+  }
+
+inv_vb_prod_wt_tab2<-inv_vb_prod_wt_tab[,2:ncol(inv_vb_prod_wt_tab)]
+
+inv_dat_prod$logZyear<- (-0.0066-(0.279*log(inv_dat_prod$MaxSizeTL_Prod))+(0.6543*log(inv_dat_prod$Kmax))+(0.4634*log(28)))
+inv_dat_prod$Zyear<-exp(inv_dat_prod$logZyear)
+
+inv_dat_prod$Zday<-inv_dat_prod$Zyear/365
+
+inv_dat_prod$SurvivalDay<-exp(-inv_dat_prod$Zday)
+
+inv_psurv_tab <- matrix (ncol = 365, nrow = nrow (inv_dat_prod), dimnames = list (NULL, paste ('Day', 1:365)))
+for (u in 1:nrow (inv_dat_prod)) {
+  inv_psurv_tab [u, ] <- exp(-inv_dat_prod$Zday[u]) 
+}
+inv_psurv_cum_tab <- inv_psurv_tab
+
+for (u in 2:ncol(inv_psurv_cum_tab))
+  for (v in 1:nrow(inv_psurv_cum_tab)) {
+    inv_psurv_cum_tab [v,u ] <- inv_psurv_cum_tab[v,u]*inv_psurv_cum_tab[v,(u-1)]
+  }
+
+inv_psurv_yr<-apply(inv_psurv_tab, 1, prod)
+
+inv_surv_outcome_day <- matrix (ncol = 365, nrow = nrow (inv_psurv_tab))
+
+for (u in 1:nrow(inv_psurv_tab))
+  for (v in 1:ncol(inv_psurv_tab)) {
+    inv_surv_outcome_day [u,v ] <- rbern(1,prob= inv_psurv_tab[u,v])
+  }
+
+nrow(subset(inv_surv_outcome_day,rowSums(inv_surv_outcome_day)!=365))
+nrow(subset(inv_surv_outcome_day,rowSums(inv_surv_outcome_day)==365))
+
+inv_surv_outcome_day2<-adply(inv_surv_outcome_day, 1, zero_row_replace)
+inv_surv_outcome_day2<-dplyr::select(inv_surv_outcome_day2, -c(X1))
+
+nrow(subset(inv_surv_outcome_day2,rowSums(inv_surv_outcome_day2)!=365))
+nrow(subset(inv_surv_outcome_day2,rowSums(inv_surv_outcome_day2)==365))
+
+inv_est_daily_prod_tab <- inv_surv_outcome_day2*inv_vb_prod_wt_tab2
+
+inv_prod_year <- rowSums(inv_est_daily_prod_tab)
+
+inv_dat_prod_final <- inv_dat_prod
+inv_dat_prod_final$prod_year_g <- inv_prod_year
+
+inv_dat_prod_final$prod_year_kg_h <- inv_dat_prod_final$prod_year_g/inv_dat_prod_final$Area*10
+
+inv_prod_trans <- ddply(inv_dat_prod_final, c("Year", "Treatment", "Atoll", "Island", "Transect"), summarise,
+                  total_prod_year = sum(prod_year_kg_h))
+
+inv_chagos_div_prod <- merge(inv_chagos_div, inv_prod_trans, by = c("Year", "Treatment", "Atoll", "Island", "Transect"), all.x=TRUE)
+
+inv_chagos_div_prod$Year <- as.numeric(as.character(inv_chagos_div_prod$Year))
+
+uvc_inv.prod.data <- uvc_inv.biomass.data %>% 
+  left_join(inv_chagos_div_prod, by = c("Year", "Treatment", "Atoll", "Island", "Transect")) %>% 
+  mutate(Prod = total_prod_year)
+
+priors_bio <- c(
+  prior(normal(2, 0.5), class = "Intercept"),
+  prior(normal(0.31, 0.38), class = "b", coef = "TreatmentRatty"),  
+  prior(normal(0, 0.5), class = "sd"),                             
+  prior(gamma(2, 0.1), class = "shape"))
+
+priors_prod <- c( 
+  prior(normal(0.43, 0.42), class = "b", coef = "TreatmentRatty"),                  
+  prior(normal(3, 0.5), class = "Intercept"),                  
+  prior(normal(0, 0.5), class = "sd"),                           
+  prior(gamma(2, 0.1), class = "shape")
+)
+
+mod.prod.inv <- brm(Prod ~ Treatment + (1|Atoll/Island) + (1|Year), family = Gamma(link = "log"), prior = priors_prod, data = uvc_inv.prod.data)
+summary(mod.prod.inv)
+hypothesis(mod.prod.inv, "TreatmentRatty > 0")
+
+mod.bio.inv <- brm(Biomass ~ Treatment + (1|Atoll/Island) + (1|Year), family = Gamma(link = "log"), prior = priors_bio, data = uvc_inv.prod.data)
+summary(mod.bio.inv)
+hypothesis(mod.bio.inv, "TreatmentRatty > 0")
+
+uvc_inv.prod.data %>% ungroup() %>% filter(Treatment == "Birdy") %>% summarize(meanprod = mean(Prod, na.rm = T)) #12.2
+uvc_inv.prod.data %>% ungroup() %>% filter(Treatment == "Ratty") %>% summarize(meanprod = mean(Prod, na.rm = T)) #24.3
+
+uvc_inv.prod.data %>% ungroup() %>% filter(Treatment == "Birdy") %>% summarize(meanbio = mean(Biomass, na.rm = T)) #3.43
+uvc_inv.prod.data %>% ungroup() %>% filter(Treatment == "Ratty") %>% summarize(meanbio = mean(Biomass, na.rm = T)) #8.96
+
+em_prod <- emmeans(mod.prod.inv,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi() #16 birdy and 20 ratty
+
+em_bio <- emmeans(mod.bio.inv,  ~ Treatment, regrid = "response", epred = T) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+
+em_prod <- emmeans(mod.prod.inv,  ~ Treatment, regrid = F) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi() #16 birdy and 20 ratty
+
+em_bio <- emmeans(mod.bio.inv,  ~ Treatment, regrid = F) %>% 
+  gather_emmeans_draws() %>% 
+  mean_hdi()
+```
+
+
+```{r fig5-plot}
+
+uvc.pisc.prod.plot <- mod.prod.pisc %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty")) %>%
+  ggplot(aes(x = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  annotation_custom(img_fish, xmin = 5.5, xmax = 6.7, ymin = 0.6, ymax = 0.9) +
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Productivity (kg." ~ha^-1~"."~y^-1~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+uvc.pisc.prod.plot
+
+uvc.inv.prod.plot <- mod.prod.inv %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+  ggplot(aes(x = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  annotation_custom(img_inv, xmin = 3.3, xmax = 4.6, ymin = 0.6, ymax = 0.9) +
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Productivity (kg." ~ha^-1~"."~y^-1~")"), y = "") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+uvc.inv.prod.plot
+
+uvc.pisc.bio.plot <- mod.bio.pisc %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+  ggplot(aes(x = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Biomass (kg." ~ha^-1~")"), y = "Piscivore") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+uvc.pisc.bio.plot
+
+uvc.inv.bio.plot <- mod.bio.inv %>% 
+  epred_draws(newdata = expand_grid(Treatment = c("Birdy", "Ratty"),
+                                    reps = 100),
+                  re_formula=NA) %>%
+  mutate(Treatment = as.factor(Treatment))%>%
+    mutate(Treatment = fct_relevel(Treatment, "Birdy", "Ratty"))%>%
+  ggplot(aes(x = log(.epred), color = Treatment, fill = Treatment, group = Treatment)) +
+  stat_slab(slab_alpha = 0.6, height = 0.8) + 
+  stat_pointinterval(point_size = 2, pch = 21, position = position_dodge(width = 0.4, preserve = "single")) +
+  scale_color_manual(values = c("#0067A4", "#BF0033"), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  guides(fill = guide_legend(nrow = 1, title = "Island status"),
+         col = guide_legend(nrow = 1, title = "Island status")) +
+  labs(x = bquote("Log-Biomass (kg." ~ha^-1~")"), y = "Invertivore") +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+
+uvc.inv.bio.plot
+
+
+uvc.plot <- ggarrange(uvc.pisc.bio.plot + rremove("xlab"),
+                      uvc.pisc.prod.plot + rremove("xlab") + rremove("y.text") + rremove("y.axis"),
+                      uvc.inv.bio.plot,
+                      uvc.inv.prod.plot + rremove("y.text") + rremove("y.axis"), nrow = 2, ncol = 2, 
+                      common.legend = T, labels = c("a", "b", "c", "d"))
+
+uvc.plot
+
+#ggsave("figures/draft/Fig6.png", uvc.plot, width = 6, height = 4, units = "in", dpi = 600)
+#ggsave("figures/draft/Fig6.pdf", rda_plot, width = 6, height = 6, units = "in", dpi = 600)
+
+```
+
