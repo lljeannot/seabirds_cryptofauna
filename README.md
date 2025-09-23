@@ -3,7 +3,7 @@
 
 **This repository contains code and data presented in the article**:
   
-Authors (anonymized). Differential cryptofaunal responses to seabird nutrient inputs illuminate coral reef productivity pathways. 
+Authors (anonymized). Contrasting cryptofaunal responses to seabird nutrient inputs illuminate coral reef productivity pathways. 
 
  
 
