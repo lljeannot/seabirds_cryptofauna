@@ -1,5 +1,5 @@
  
-# **Differential cryptofaunal responses to seabird nutrient inputs illuminate coral reef productivity pathways code and data**
+# **Contrasting cryptofaunal responses to seabird nutrient inputs illuminate coral reef productivity pathways code and data**
 
 **This repository contains code and data presented in the article**:
   
