@@ -175,6 +175,12 @@ fish_data_TL <- read.csv("data/CHA23_Fish_data.csv") %>%
             SD_W = sd(W, na.rm = T),
             n = n())
 
+# Table S3
+
+tables3 <- fish_data_SIA %>% 
+  group_by(GENSPE, Treatment) %>% 
+  summarize(N = n())
+
 # 3. Load silhouettes
 
 img_fish <- image_read("figures/silhouettes/Eviogutt.png") %>% 
@@ -390,8 +396,8 @@ arrow_plot <- ggplot() +
 
 arrow_plot
 
-#ggsave("figures/draft/Fig1.png", arrow_plot, width = 7, height = 5, units = "in", dpi = 600)
-#ggsave("figures/draft/Fig1.pdf", arrow_plot, width = 6, height = 4, units = "in", dpi = 600)
+ggsave("figures/main/Fig1.jpg", arrow_plot, width = 7, height = 5, units = "in", dpi = 600)
+#ggsave("figures/main/Fig1.pdf", arrow_plot, width = 6, height = 4, units = "in", dpi = 600)
 ```
 
 # I. Stable isotope analyses ----
@@ -678,46 +684,14 @@ N15.inv.fam.plot <- ggplot(contrast_draws_inv, aes(x = .value, y = fct_reorder(T
 N15.TL.fish.pred <- data_SIA_fish %>% 
   mutate(logTL = log(TL), TL_c = logTL - mean(logTL, na.rm = T)) %>% 
   group_by(Treatment, Site) %>%  
-  data_grid(TL_c = seq_range(TL_c, n = 100), Treatment) %>%
+  data_grid(TL_c = seq_range(TL_c, n = 100)) %>%
   add_epred_draws(N15.TL.fish.log, ndraws = 1000, re_formula = NA) 
 
 N15.TL.inv.pred <- data_SIA_inv %>% 
   mutate(logLength = log(Length), Length_c = logLength - mean(logLength, na.rm = T)) %>% 
   group_by(Treatment, Site) %>%  
-  data_grid(Length_c = seq_range(Length_c, n = 100), Treatment) %>%
+  data_grid(Length_c = seq_range(Length_c, n = 100)) %>%
   add_epred_draws(N15.TL.inv.log, ndraws = 1000, re_formula = NA) 
-
-
-N15.TL.fish.pred.plot <- ggplot(N15.TL.fish.pred, aes(x = TL_c, y = .epred, color = Treatment)) +
-  stat_lineribbon(aes(y = .epred, color = Treatment, fill = Treatment), .width = .5) +
-  geom_point(data = data_SIA_fish %>% mutate(logTL = log(TL), TL_c = logTL - mean(logTL, na.rm = T)), 
-             aes(col = Treatment, y = N15, fill = Treatment), size = 0.6, alpha = 0.5, pch = 21, color = "black") +
-  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
-  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.2), labels = c("Seabird-rich", "Rat-infested")) +
-  theme(legend.position = c(0.87, 0.87),
-        panel.background = element_rect(fill = "transparent"),
-        axis.line = element_line(colour = "black"),
-        axis.ticks.y = element_blank()) +
-  ylab(expression(~delta^15*N~"\U2030")) +
-  labs(x = "Centered log-length (mm)") +
-  theme(legend.position = "none") +
-  inset_element(slope_TL_fish.plot, 0, 0.6, 0.6, 1.1)
-
-N15.TL.inv.pred.plot <- ggplot(N15.TL.inv.pred, aes(x = Length_c, y = .epred, color = Treatment)) +
-  stat_lineribbon(aes(y = .epred, color = Treatment, fill = Treatment), .width = .50) +
-  annotation_custom(img_inv, xmin = -0.5, xmax = 2, ymin = 13.5, ymax = 16.5) +
-  geom_point(data = data_SIA_inv %>% mutate(logLength = log(Length), Length_c = logLength - mean(logLength, na.rm = T)), 
-             aes(col = Treatment, y = N15, fill = Treatment), size = 0.6, alpha = 0.5, pch = 21, color = "black") +
-  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
-  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.2), labels = c("Seabird-rich", "Rat-infested")) +
-  theme(panel.background = element_rect(fill = "transparent"),
-        axis.line = element_line(colour = "black"),
-        axis.ticks.y = element_blank()) +
-  ylab(expression(~delta^15*N~"\U2030")) +
-  labs(x = "Centered log-length (mm)") +
-  theme(legend.position = "none") +
-  coord_cartesian(clip = "off") +
-  inset_element(slope_TL_inv.plot, 0, 0.6, 0.6, 1.1) 
 
 # Slope fish
 
@@ -753,6 +727,37 @@ slope_TL_inv.plot <- ggplot(draws_inv, aes(x = pct_diff)) +
 
 # Figure 2
 
+N15.TL.fish.pred.plot <- ggplot(N15.TL.fish.pred, aes(x = TL_c, y = .epred, color = Treatment)) +
+  stat_lineribbon(aes(y = .epred, color = Treatment, fill = Treatment), .width = .5) +
+  geom_point(data = data_SIA_fish %>% mutate(logTL = log(TL), TL_c = logTL - mean(logTL, na.rm = T)), 
+             aes(col = Treatment, y = N15, fill = Treatment), size = 0.6, alpha = 0.5, pch = 21, color = "black") +
+  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.2), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(legend.position = c(0.87, 0.87),
+        panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank()) +
+  ylab(expression(~delta^15*N~"\U2030")) +
+  labs(x = "Centered log-length (mm)") +
+  theme(legend.position = "none") +
+  inset_element(slope_TL_fish.plot, 0, 0.6, 0.6, 1.1)
+
+N15.TL.inv.pred.plot <- ggplot(N15.TL.inv.pred, aes(x = Length_c, y = .epred, color = Treatment)) +
+  stat_lineribbon(aes(y = .epred, color = Treatment, fill = Treatment), .width = .50) +
+  annotation_custom(img_inv, xmin = -0.5, xmax = 2, ymin = 13.5, ymax = 16.5) +
+  geom_point(data = data_SIA_inv %>% mutate(logLength = log(Length), Length_c = logLength - mean(logLength, na.rm = T)), 
+             aes(col = Treatment, y = N15, fill = Treatment), size = 0.6, alpha = 0.5, pch = 21, color = "black") +
+  scale_color_manual(values = alpha(c("#0067A4", "#BF0033"), 0.7), labels = c("Seabird-rich", "Rat-infested")) +
+  scale_fill_manual(values = alpha(c("#0067A4", "#BF0033"), 0.2), labels = c("Seabird-rich", "Rat-infested")) +
+  theme(panel.background = element_rect(fill = "transparent"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank()) +
+  ylab(expression(~delta^15*N~"\U2030")) +
+  labs(x = "Centered log-length (mm)") +
+  theme(legend.position = "none") +
+  coord_cartesian(clip = "off") +
+  inset_element(slope_TL_inv.plot, 0, 0.6, 0.6, 1.1)
+
 fig2 <- ggarrange(ggarrange(N15.tot.fish.pred.plot, N15.TL.fish.pred.plot,
                     N15.tot.inv.pred.plot, N15.TL.inv.pred.plot,
                     nrow = 1, common.legend = T, legend = "top", labels = c("a", "b", "c", "d")), 
@@ -762,7 +767,7 @@ fig2 <- ggarrange(ggarrange(N15.tot.fish.pred.plot, N15.TL.fish.pred.plot,
 
 fig2
 
-#ggsave("figures/main/Fig2.png", fig2, width = 9, height = 6, units = "in", dpi = 600)
+ggsave("figures/main/Fig2.jpg", fig2, width = 9, height = 6, units = "in", dpi = 600)
 
 ```
 
@@ -982,7 +987,7 @@ fig3 <- ggarrange(plot_ellipse_treatment,
 
 fig3
 
-ggsave("figures/main/Fig3.png", fig3, width = 7, height = 5, units = "in", dpi = 600)
+ggsave("figures/main/Fig3.jpg", fig3, width = 7, height = 5, units = "in", dpi = 600)
 
 ```
 
@@ -1101,7 +1106,7 @@ Biomass_m.pred.plot.fish
 
 ```
 
-```{r figs2}
+```{r figs1}
 
 # Format data
 
@@ -1187,16 +1192,16 @@ fish.fam.dens.plot <- Dens.mod.fish.fam %>%
         axis.line = element_line(colour = "black"),
         axis.ticks.y = element_blank())
 
-figs2 <- ggarrange(fish.fam.bio.plot, fish.fam.dens.plot + rremove("y.text"), widths = c(1.4, 1),
+figs1 <- ggarrange(fish.fam.bio.plot, fish.fam.dens.plot + rremove("y.text"), widths = c(1.4, 1),
                              common.legend = T, nrow = 1)
 
-figs2
+figs1
 
-#ggsave("figures/draft/FigS2.png", figs2, width = 7, height = 6, units = "in", dpi = 600)
+#ggsave("figures/draft/FigS1.jpg", figs1, width = 7, height = 6, units = "in", dpi = 600)
 
 ```
 
-```{r figs3}
+```{r figs2}
 
 # Format data
 
@@ -1283,10 +1288,10 @@ fish.genspe.dens.plot <- Dens.mod.fish.genspe %>%
         axis.ticks.y = element_blank(),
         axis.text.y = element_text(face="italic"))
 
-figs3 <- ggarrange(fish.genspe.bio.plot, fish.genspe.dens.plot + rremove("y.text"), widths = c(1.4, 1),
+figs2 <- ggarrange(fish.genspe.bio.plot, fish.genspe.dens.plot + rremove("y.text"), widths = c(1.4, 1),
                              common.legend = T, nrow = 1)
 
-#ggsave("figures/supp/FigS3.png", figs3, width = 7, height = 7, units = "in", dpi = 600)
+#ggsave("figures/supp/FigS2.png", figs2, width = 7, height = 7, units = "in", dpi = 600)
 
 ```
 
@@ -1374,7 +1379,7 @@ ggplot(aes(x = Treatment, y = log(.epred), color = Treatment, fill = Treatment, 
 Biomass_m.pred.plot.inv
 ```
 
-```{r figs4}
+```{r figs3}
 
 # Format data
 
@@ -1466,12 +1471,12 @@ inv.red.fam.dens.plot <- Dens.mod.inv.red.fam %>%
         axis.line = element_line(colour = "black"),
         axis.ticks.y = element_blank())
 
-figs4 <- ggarrange(inv.red.fam.bio.plot, inv.red.fam.dens.plot + rremove("y.text"), 
+figs3 <- ggarrange(inv.red.fam.bio.plot, inv.red.fam.dens.plot + rremove("y.text"), 
                              common.legend = T, nrow = 1)
 
-figs4
+figs3
 
-#ggsave("figures/supp/FigS4.png", figs4, width = 6, height = 7, units = "in", dpi = 600)
+#ggsave("figures/supp/FigS3.png", figs3, width = 6, height = 7, units = "in", dpi = 600)
 
 ```
 
@@ -1585,7 +1590,7 @@ fig4 <- ggarrange(
 
 fig4
 
-#ggsave("figures/main/Fig4.png", fig4, width = 6, height = 5, units = "in", dpi = 600)
+ggsave("figures/main/Fig4.jpg", fig4, width = 6, height = 5, units = "in", dpi = 600)
 
 ```
 
@@ -1707,12 +1712,12 @@ simper_inv_df <- summary(simper_inv)[1] %>%
 
 # III. 1. Mixing models
 
-```{r figs1}
+```{r figs5}
 
 # Reliance on d13C (planktonic resources) with length
 
 p1 <- ggplot(data_SIA_fish_mm %>% 
-  filter(GENSPE == "Chlidichthys chagosensis"), aes(x = Length, y = C13)) +
+  filter(GENSPE == "Chlidichthys chagosensis"), aes(x = TL, y = C13)) +
   geom_point() +
   geom_vline(xintercept = 30, col = "red", linetype = "dashed") +
   ylab(expression(~delta^13*C~"\U2030")) +
@@ -1725,7 +1730,7 @@ p1 <- ggplot(data_SIA_fish_mm %>%
   coord_cartesian(xlim = c(12, 42))
 
 p2 <- ggplot(data_SIA_fish_mm %>% 
-  filter(GENSPE == "Chlidichthys chagosensis"), aes(x = Length)) +
+  filter(GENSPE == "Chlidichthys chagosensis"), aes(x = TL)) +
   geom_histogram() +
   geom_vline(xintercept = 30, col = "red", linetype = "dashed") +
   ylab("Density") +
@@ -1742,8 +1747,8 @@ p2 <- ggplot(data_SIA_fish_mm %>%
 p3 <- ggplot(data_SIA_fish_mm %>% 
   filter(GENSPE == "Chlidichthys chagosensis") %>% 
   mutate(Group = case_when(
-    Length < 30 ~ "< 30 mm",
-    Length > 30 ~ "> 30 mm")), aes(x = Length, y = C13)) +
+    TL < 30 ~ "< 30 mm",
+    TL > 30 ~ "> 30 mm")), aes(x = TL, y = C13)) +
   geom_vline(xintercept = 30, col = "red", linetype = "dashed") +
   geom_boxplot(aes(group = Group)) +
   ylab(expression(~delta^13*C~"\U2030")) +
@@ -1756,8 +1761,8 @@ p3 <- ggplot(data_SIA_fish_mm %>%
   coord_cartesian(xlim = c(12, 42))
 
 chag_all  <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% transmute(Group = "C. chagosensis (all)", C13)
-chag_lt30 <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% filter(Length < 30)  %>% transmute(Group = "C. chagosensis < 30 mm",  C13)
-chag_ge30 <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% filter(Length > 30) %>% transmute(Group = "C. chagosensis \u2265 30 mm", C13)
+chag_lt30 <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% filter(TL < 30)  %>% transmute(Group = "C. chagosensis < 30 mm",  C13)
+chag_ge30 <- data_SIA_fish_mm %>% filter(GENSPE == "Chlidichthys chagosensis") %>% filter(TL > 30) %>% transmute(Group = "C. chagosensis \u2265 30 mm", C13)
 
 fish <- data_SIA_fish_mm %>% filter(GENSPE != "Chlidichthys chagosensis") %>% transmute(Group = "Other cryptobenthic fishes", C13)
 inv <- data_SIA_inv_mm %>% transmute(Group = "Cryptobenthic invertebrates", C13)
@@ -1780,11 +1785,11 @@ p4 <- ggplot(plot_df, aes(x = Group, y = C13)) +
         legend.text  = element_text(size = 12),       
         legend.key.size = unit(1.5, "line"))
 
-figs1 <- ggarrange(p2 + rremove("x.text") + rremove("xlab") + rremove("x.ticks"), 
+figs5 <- ggarrange(p2 + rremove("x.text") + rremove("xlab") + rremove("x.ticks"), 
                    p1 + rremove("x.text") + rremove("xlab") + rremove("x.ticks"), p3, p4, 
                    nrow = 3, align = "v", labels = c("a", "b", "c", "d"), heights = c(1,1,1.2, 1.2))
 
-#ggsave("figures/supp/FigS1.png", figs1, width = 7, height = 5, units = "in", dpi = 600)
+#ggsave("figures/supp/FigS5.png", figs5, width = 7, height = 5, units = "in", dpi = 600)
 
 ```
 
@@ -1794,8 +1799,8 @@ figs1 <- ggarrange(p2 + rremove("x.text") + rremove("xlab") + rremove("x.ticks")
 # Format data
 
 mix_Chlichag <- data_SIA_fish_mm %>% 
-  filter(GENSPE == "Chlidichthys chagosensis" & Length > 30) %>% 
-  select(C13, N15, Treatment, Length)
+  filter(GENSPE == "Chlidichthys chagosensis" & TL > 30) %>% 
+  select(C13, N15, Treatment, TL)
 
 mix_fish <- data_SIA_fish_mm %>% 
   filter(GENSPE != "Chlidichthys chagosensis") %>% 
@@ -1812,18 +1817,18 @@ sources <- rbind(mix_fish, mix_inv) %>%
   summarize(MeanC13 = mean(C13, na.rm = T), MeanN15 = mean(N15, na.rm = T), SDN15 = sd(N15, na.rm = T), SDC13 = sd(C13, na.rm = T), n = n()) %>% 
   ungroup()
 
-write.csv(mix_Chlichag, "output_data/mix_Chlichag.csv", row.names = FALSE)
-write.csv(sources, "output_data/sources.csv", row.names = FALSE)
+write.csv(mix_Chlichag, "data/mix_Chlichag.csv", row.names = FALSE)
+write.csv(sources, "data/sources.csv", row.names = FALSE)
 
 # Load the mixture/consumer data
-Chlichag_mix <- load_mix_data("output_data/mix_Chlichag.csv", 
+Chlichag_mix <- load_mix_data("data/mix_Chlichag.csv", 
                             iso_names = c("C13","N15"), 
                             factors = c("Treatment"), 
                             fac_random = c(FALSE), 
                             fac_nested = c(FALSE), 
-                            cont_effects = "Length")
+                            cont_effects = "TL")
 
-sources <- load_source_data("output_data/sources.csv",
+sources <- load_source_data("data/sources.csv",
                                          source_factors = "Treatment", 
                                          conc_dep = FALSE, 
                                          data_type = "means", 
@@ -1833,7 +1838,7 @@ discr_Chlichag_mix <- load_discr_data("data/discr.csv", Chlichag_mix)
 
 ```
 
-```{r figs5-models}
+```{r figs4-models}
 
 # Write the JAGS model file
 model_filename <- "MixSIAR_model_Chlichag.txt"   # Name of the JAGS model file
@@ -1875,7 +1880,7 @@ output_options <- list(summary_save = TRUE,
 output_JAGS(jags.Chlichag, Chlichag_mix, sources, output_options)
 ```
 
-```{r figs5-plots}
+```{r figs4-plots}
 
 g.post <- output_posteriors(jags.Chlichag, Chlichag_mix, sources, output_options)
 
@@ -1933,14 +1938,14 @@ plot.mix.d <- g.post$fac[[2]] +
   ggtitle("Seabird-poor") +
   coord_cartesian(clip = "off")
 
-plot.mix <- ggarrange(plot.mix.c + rremove("legend.title"), plot.mix.d + rremove("ylab") + rremove("legend.title"),
+figs4 <- ggarrange(plot.mix.c + rremove("legend.title"), plot.mix.d + rremove("ylab") + rremove("legend.title"),
                                plot.mix.a + rremove("legend.title"), plot.mix.b + rremove("ylab") + rremove("legend.title"),
                                labels = c("a", "b", "c", "d"), vjust = c(0.7, 0.7, -0.4, -0.4),
                                ncol = 2, nrow = 2, common.legend = T, legend = "top")
 
-plot.mix
-#ggsave("figures/draft/FigS4.png", plot.mix, width = 6, height = 5, units = "in", dpi = 600)
-#ggsave("figures/draft/FigS4.pdf", plot.mix, width = 6, height = 5, units = "in", dpi = 600)
+figs4
+#ggsave("figures/draft/FigS4.png", figs4, width = 6, height = 5, units = "in", dpi = 600)
+#ggsave("figures/draft/FigS4.pdf", figs4, width = 6, height = 5, units = "in", dpi = 600)
 
 # values
 get_data(plot.mix.a, local_only = FALSE)
@@ -2724,8 +2729,8 @@ uvc.plot <- ggarrange(uvc.pisc.bio.plot + rremove("xlab"),
 
 uvc.plot
 
-#ggsave("figures/draft/Fig6.png", uvc.plot, width = 6, height = 4, units = "in", dpi = 600)
-#ggsave("figures/draft/Fig6.pdf", rda_plot, width = 6, height = 6, units = "in", dpi = 600)
+ggsave("figures/main/Fig6.jpg", uvc.plot, width = 6, height = 4, units = "in", dpi = 600)
+#ggsave("figures/main/Fig6.pdf", rda_plot, width = 6, height = 6, units = "in", dpi = 600)
 
 ```
 
