@@ -2010,11 +2010,9 @@ total_reefs_surveyed_benkwitt <- read.csv("data/UVC_priors.csv") %>% filter(Area
 
 uvc_benkwitt <- read.csv("data/UVC_priors.csv") %>% filter(Diet == "Piscivore" & Area > 100) %>% mutate(Species = str_replace_all(Species, "_", " ")) %>% 
   left_join(uvc_dat %>% select(Species, a, b), by = "Species") %>% 
-  mutate(a = ifelse(is.na(a.x), a.y, a.x),
-         b = ifelse(is.na(b.x), b.y, b.x),
-         Weight = a*(Length^b),
+  mutate(Weight = a*(Length^b),
          Weight_m = Weight/Area) %>% 
-  select(-a.x, -a.y, -b.x, -b.y, -Abundance)
+  select(-Abundance)
 
 uvc_benkwitt$Biomass <-as.numeric(uvc_benkwitt$Weight_m) * 10
 
@@ -2025,7 +2023,7 @@ pisc_dat_bio_wide <- dcast(pisc_dat_sum, Year + Atoll + Island + Treatment + Tra
 
 pisc_dat_bio_wide[is.na(pisc_dat_bio_wide)]<-0
 
-pisc_sum_bio<-rowSums(pisc_dat_bio_wide[,8:ncol(pisc_dat_bio_wide)])
+pisc_sum_bio<-rowSums(pisc_dat_bio_wide[,7:ncol(pisc_dat_bio_wide)])
 
 pisc_chagos_div <- cbind(pisc_dat_bio_wide[1:6],pisc_sum_bio)
 
@@ -2136,7 +2134,7 @@ summary(prod_prior_pisc.mod)$tTable
 bio_prior_pisc.mod <- lme(log(Biomass) ~ Treatment + Year + Structure, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_pisc.prod) 
 summary(bio_prior_pisc.mod)$tTable
 
-# Est = -1.94; SD = 0.74
+# Est = -1.85; SD = 0.70
 
 # Invertivore priors ----
 
@@ -2144,11 +2142,9 @@ summary(bio_prior_pisc.mod)$tTable
 
 uvc_benkwitt <- read.csv("data/UVC_priors.csv") %>% filter(Diet == "Invertivore" & Area > 100) %>% mutate(Species = str_replace_all(Species, "_", " ")) %>% 
   left_join(uvc_dat %>% select(Species, a, b), by = "Species") %>% 
-  mutate(a = ifelse(is.na(a.x), a.y, a.x),
-         b = ifelse(is.na(b.x), b.y, b.x),
-         Weight = a*(Length^b),
+  mutate(Weight = a*(Length^b),
          Weight_m = Weight/Area) %>% 
-  select(-a.x, -a.y, -b.x, -b.y, -Coral_cover, -Abundance, -Structure)
+  select(-Coral_cover, -Abundance, -Structure)
 
 uvc_benkwitt$Biomass <-as.numeric(uvc_benkwitt$Weight_m) * 10
 
@@ -2159,7 +2155,7 @@ inv_dat_bio_wide <- dcast(inv_dat_sum, Year + Atoll + Island + Treatment + Trans
 
 inv_dat_bio_wide[is.na(inv_dat_bio_wide)]<-0
 
-inv_sum_bio<-rowSums(inv_dat_bio_wide[,8:ncol(inv_dat_bio_wide)])
+inv_sum_bio<-rowSums(inv_dat_bio_wide[,7:ncol(inv_dat_bio_wide)])
 
 inv_chagos_div <- cbind(inv_dat_bio_wide[1:6],inv_sum_bio)
 
@@ -2266,7 +2262,7 @@ total_inv.prod <- inv_chagos_div_prod %>% full_join(total_reefs_surveyed_benkwit
 prod_prior_inv.mod <- lme(log(Prod) ~ Treatment + Year + Structure + Coral_cover, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_inv.prod) 
 summary(prod_prior_inv.mod)$tTable
 
-#Est = 0.43; SD = 0.42
+#Est = 0.48; SD = 0.41
 
 bio_prior_inv.mod <- lme(log(Biomass) ~ Treatment + Year + Structure + Coral_cover, random = ~1|Atoll/Island, correlation = corCompSymm(form = ~Year | Atoll/Island), data=total_inv.prod) 
 summary(bio_prior_inv.mod)$tTable
@@ -2291,7 +2287,7 @@ pisc_dat_bio_wide <- pisc_dat %>%
   pivot_wider(names_from = Species, values_from = Sum_Bio, values_fill = 0)
 
 # Sum biomass
-pisc_sum_bio <- rowSums(pisc_dat_bio_wide[,8:ncol(pisc_dat_bio_wide)])
+pisc_sum_bio <- rowSums(pisc_dat_bio_wide[,6:ncol(pisc_dat_bio_wide)])
 
 pisc_chagos_div <- cbind(pisc_dat_bio_wide[1:5], pisc_sum_bio) %>% mutate(Year = as.integer(Year))
 
@@ -2421,6 +2417,9 @@ uvc_pisc.prod.data <- uvc_pisc.biomass.data %>%
   mutate(Prod = ifelse(is.na(Prod), 10, Prod + 10),
          Biomass = ifelse(is.na(Biomass), 10, Biomass + 10))
 
+ggplot(uvc_pisc.prod.data, aes(x = Treatment, y = log(Prod))) +
+  geom_boxplot()
+
 # Priors calculated above
 
 priors_prod <- c( 
@@ -2430,7 +2429,7 @@ priors_prod <- c(
   prior(gamma(2, 0.1), class = "shape"))
 
 priors_bio <- c( 
-  prior(normal(-1.94, 0.74), class = "b", coef = "TreatmentRatty"),                  
+  prior(normal(-1.85, 0.70), class = "b", coef = "TreatmentRatty"),                  
   prior(normal(3, 0.5), class = "Intercept"),                    
   prior(normal(0, 0.5), class = "sd"),                         
   prior(gamma(2, 0.1), class = "shape"))
@@ -2487,7 +2486,7 @@ inv_dat_bio_wide <- dcast(inv_dat_sum, Year+ Atoll + Island + Treatment + Transe
 
 inv_dat_bio_wide[is.na(inv_dat_bio_wide)]<-0
 
-inv_sum_bio<-rowSums(inv_dat_bio_wide[,8:ncol(inv_dat_bio_wide)])
+inv_sum_bio<-rowSums(inv_dat_bio_wide[,6:ncol(inv_dat_bio_wide)])
 
 inv_chagos_div <- cbind(inv_dat_bio_wide[1:5],inv_sum_bio)
 
@@ -2598,7 +2597,7 @@ priors_bio <- c(
   prior(gamma(2, 0.1), class = "shape"))
 
 priors_prod <- c( 
-  prior(normal(0.43, 0.42), class = "b", coef = "TreatmentRatty"),                  
+  prior(normal(0.48, 0.41), class = "b", coef = "TreatmentRatty"),                  
   prior(normal(3, 0.5), class = "Intercept"),                  
   prior(normal(0, 0.5), class = "sd"),                           
   prior(gamma(2, 0.1), class = "shape")
@@ -2729,8 +2728,8 @@ uvc.plot <- ggarrange(uvc.pisc.bio.plot + rremove("xlab"),
 
 uvc.plot
 
-ggsave("figures/main/Fig6.jpg", uvc.plot, width = 6, height = 4, units = "in", dpi = 600)
-#ggsave("figures/main/Fig6.pdf", rda_plot, width = 6, height = 6, units = "in", dpi = 600)
+ggsave("figures/main/Fig5.jpg", uvc.plot, width = 6, height = 4, units = "in", dpi = 600)
+ggsave("figures/main/Fig5.pdf", uvc.plot, width = 6, height = 4, units = "in", dpi = 600)
 
 ```
 
